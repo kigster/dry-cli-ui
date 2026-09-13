@@ -1,27 +1,19 @@
 inherit_from:
 - https://relaxed.ruby.style/rubocop.yml
-  
+
 AllCops:
   NewCops: enable
   SuggestExtensions: false
   TargetRubyVersion: 4.0
   Exclude:
-  - 'lib/dry-cli-autocomplete.rb'
+  - 'lib/dry-cli-ui.rb'
   - 'vendor/**/*'
   - 'bin/**/*'
   - 'tmp/**/*'
   - 'spec/**/*'
 
 Layout/LineLength:
-  Max: 100
-
-Metrics/MethodLength:
-  Exclude:
-    - "lib/dry/cli/autocomplete/emitters/*.rb"
-
-Metrics/ClassLength:
-  Exclude:
-    - "lib/dry/cli/autocomplete/emitters/*.rb"
+  Max: 120
 
 Metrics/BlockLength:
   Exclude:

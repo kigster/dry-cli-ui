@@ -1,0 +1,32 @@
+module Dry
+  class CLI
+    module UI
+      VERSION: String
+
+      class Error < StandardError
+      end
+
+      class NonInteractiveError < Error
+      end
+
+      def ui: () -> Console
+
+      class Console
+        def debug: (*_ToS paragraphs, ?width: Integer?) -> nil
+        def info: (*_ToS paragraphs, ?width: Integer?) -> nil
+        def success: (*_ToS paragraphs, ?width: Integer?) -> nil
+        def warn: (*_ToS paragraphs, ?width: Integer?) -> nil
+        def error: (*_ToS paragraphs, ?width: Integer?) -> nil
+        def fatal: (*_ToS paragraphs, ?width: Integer?) -> nil
+        def box: (*_ToS paragraphs, ?title: String?, ?level: Symbol?, ?width: Integer?) -> nil
+        def status: (*_ToS words, ?level: Symbol) -> nil
+        def spinner: [T] (String label) { () -> T } -> T
+        def progress: [T] (String label, total: Integer) { (untyped progress) -> T } -> T
+        def tasks: (?String? title, ?concurrent: bool) { (untyped tasks) -> void } -> nil
+        def table: (Array[Array[_ToS]] rows, ?header: Array[_ToS]?) -> nil
+        def prompt: (String question, ?default: untyped, ?choices: (Array[String] | Hash[String, untyped])?) -> untyped
+        def confirm: (String question, ?default: bool) -> bool
+      end
+    end
+  end
+end

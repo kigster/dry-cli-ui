@@ -5,16 +5,20 @@ ENV["RUBYOPT"] = "-W0"
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
 require "rspec/its"
+require "stringio"
 require "timeout"
 
-if ARGV.empty?
+# Coverage runs for the whole suite (`rspec` with no arguments) or whenever
+# COVERAGE is set, which is how `rake` and CI run it. A focused run of one file
+# would otherwise fail the minimum.
+if ARGV.empty? || ENV["COVERAGE"]
   require "simplecov"
   require "coverage/badge"
 
   SimpleCov.start do
     enable_coverage :branch
-    track_files "lib/**/*.rb"
-    add_filter "/spec/"
+    minimum_coverage line: 100, branch: 100
+    cover "lib/**/*.rb"
     self.formatters = SimpleCov::Formatter::MultiFormatter.new(
       [
         SimpleCov::Formatter::HTMLFormatter,
@@ -22,6 +26,12 @@ if ARGV.empty?
       ]
     )
   end
+
+  # Bundler reads the gemspec, and so this file, before coverage starts.
+  verbose = $VERBOSE
+  $VERBOSE = nil
+  load File.expand_path("../lib/dry/cli/ui/version.rb", __dir__)
+  $VERBOSE = verbose
 
   SimpleCov.at_exit do
     SimpleCov.result.format!
@@ -31,14 +41,19 @@ if ARGV.empty?
   end
 end
 
-require "dry-cli-autocomplete"
+require "dry/cli"
+require "dry-cli-ui"
+
+Dir[File.join(__dir__, "support", "**", "*.rb")].each { |file| require file }
 
 PROJECT_ROOT = File.expand_path("..", __dir__)
-FIXTURES_ROOT = File.join(PROJECT_ROOT, "spec", "support", "fixtures")
 
 RSpec.configure do |config|
   config.disable_monkey_patching!
   config.expect_with :rspec do |expectations|
     expectations.syntax = :expect
+  end
+  config.around do |example|
+    Timeout.timeout(10) { example.run }
   end
 end
