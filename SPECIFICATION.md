@@ -1,246 +1,322 @@
-# `dry-cli-autocomplete`: Specification
+# `dry-cli-ui`
 
-Generate static shell completion scripts for any `Dry::CLI` application, from the command registry alone.
+Rich runtime terminal UI for [`dry-cli`](https://github.com/dry-rb/dry-cli) commands.
 
-The intended use is one line in a shell profile:
+## Purpose
+
+`dry-cli-ui` gives ordinary `dry-cli` commands a high-level API for presenting their **runtime state**.
+
+It is particularly useful for long-running commands where plain `puts` output does not adequately communicate progress, activity, warnings, failures, or completion.
+
+It is not intended primarily as a framework for building full-screen terminal applications.
+
+Instead, it adds rich terminal UI to normal CLI commands while preserving the familiar command-line experience and terminal scrollback.
+
+## Responsibilities
+
+- Spinners
+- Progress bars
+- Status messages
+- Success messages
+- Warning messages
+- Error messages
+- Styled boxes and panels
+- Tables
+- Task trees
+- Nested operations
+- Several operations running at once
+- Elapsed time and ETA
+- Interactive prompts
+- Terminal-aware rendering
+- Graceful fallback when ANSI/interactive output is unavailable
+
+## Example
+
+```ruby
+class Import < Dry::CLI::Command
+  include Dry::CLI::UI
+
+  def call(**)
+    ui.info "Importing tax rules..."
+
+    ui.spinner("Loading tax rules") do
+      load_rules
+    end
+
+    ui.progress("Importing rules", total: rules.size) do |bar|
+      rules.each do |rule|
+        import(rule)
+        bar.advance
+      end
+    end
+
+    ui.success "Imported #{rules.size} rules"
+  rescue => e
+    ui.error("Import failed", e.message)
+  end
+end
+```
+
+Example output, piped, when the import fails part way:
+
+```text
+Loading tax rules...
+✓ Loading tax rules (0.3s)
+Importing rules...
+✗ Importing rules 1482/1900 (4.1s)
+┌─ Error ──────────────────────────────────────────────────┐
+│                                                          │
+│  Import failed                                           │
+│                                                          │
+│  Could not validate rule US.2026.IRC.199A: missing       │
+│  dependency taxable_income                               │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+On a terminal the spinner turns and the bar fills in place (`Importing rules ███████░░░ 78%  1482/1900  ETA  4s`), and each is replaced by the same outcome line when its block ends.
+
+## API
+
+Commands depend on a small semantic API rather than directly manipulating terminal primitives:
+
+```ruby
+ui.debug(...)
+ui.info(...)
+ui.success(...)
+ui.warn(...)
+ui.error(...)
+ui.fatal(...)
+
+ui.spinner(...)
+ui.progress(...)
+ui.status(...)
+
+ui.box(...)
+ui.table(...)
+ui.tasks(...)
+
+ui.prompt(...)
+ui.confirm(...)
+```
+
+This separates **what the command wants to communicate** from **how the terminal renders it**.
+
+## Rendering
+
+The implementation builds on existing Ruby terminal libraries rather than reimplementing terminal mechanics: `tty-box`, `tty-spinner`, `tty-progressbar`, `tty-table`, `tty-prompt`, `tty-cursor`, `tty-screen`, `pastel` and `strings`.
+
+The public API does not expose these dependencies. No method returns or yields a TTY object, and no argument takes one.
+
+That leaves open the possibility of introducing other renderers later, including richer inline TUI implementations, without changing application command code.
+
+## Design Principle
+
+`dry-cli-ui` owns what the user sees **while a command runs and when it finishes**.
+
+```text
+dry-cli
+    │
+    └── dry-cli-ui
+          │
+          ├── spinner
+          ├── progress
+          ├── status
+          ├── debug/info/success/warn/error/fatal
+          ├── boxes
+          ├── tables
+          ├── task trees
+          └── prompts
+```
+
+## Relationship to dry-cli-help
+
+The two gems deliberately have separate responsibilities:
+
+```text
+dry-cli
+    │
+    ├── dry-cli-help
+    │     Static presentation
+    │
+    │     "What does this command do?"
+    │
+    └── dry-cli-ui
+          Runtime presentation
+
+          "What is this command doing?"
+```
+
+A CLI application can use either gem independently or combine them:
+
+```ruby
+gem "dry-cli"
+gem "dry-cli-help"
+gem "dry-cli-ui"
+```
+
+Together they provide richer presentation without turning `dry-cli` itself into a large terminal UI framework.
+
+## Boxes
+
+`debug`, `info`, `success`, `warn`, `error` and `fatal` each draw a box:
+
+- a single-line white border,
+- the level's name as a bold, coloured title in the top border (`┌─ Error ───`),
+- one blank row above and below the text and two columns either side,
+- each argument as its own paragraph, wrapped to fit, separated by a blank line.
+
+The width is one of:
+
+1. a fixed number of columns, per console (`Console.new(box_width: 72)`) or per call (`ui.info("...", width: 72)`), never wider than the terminal;
+1. the whole terminal less a two-column margin, which is the default.
+
+A box is never narrower than 20 columns. `ui.box(*paragraphs, title:, level:)` draws the same frame without a level, or with a level's styling and a different title.
+
+| Level     | Title   | Glyph | Colour  | Stream |
+| --------- | ------- | ----- | ------- | ------ |
+| `debug`   | Debug   | `·`   | grey    | err    |
+| `info`    | Info    | `ℹ`   | cyan    | out    |
+| `success` | Success | `✓`   | green   | out    |
+| `warn`    | Warning | `⚠`   | yellow  | err    |
+| `error`   | Error   | `✗`   | red     | err    |
+| `fatal`   | Fatal   | `✖`   | magenta | err    |
+
+`success` and `fatal` were added to the original five (`debug`, `info`, `warn`, `error`, `fatal`) because the example above uses `success`.
+
+## Design decisions
+
+### Architecture
+
+```mermaid
+flowchart LR
+  Command["Dry::CLI::Command<br/>include Dry::CLI::UI"] -->|"#ui"| Console
+  Console --> OutTerm["Terminal (out)"]
+  Console --> ErrTerm["Terminal (err)"]
+  Console --> Widgets
+  subgraph Widgets
+    Box
+    Status
+    Spinner
+    Progress
+    Tasks
+    Table
+    Prompt
+  end
+  Widgets --> TTY["TTY toolkit, Pastel, Strings"]
+```
+
+| File                          | Role                                                                       |
+| ----------------------------- | -------------------------------------------------------------------------- |
+| `lib/dry/cli/ui.rb`           | The mixin. Defines `#ui` and autoloads everything else.                    |
+| `lib/dry/cli/ui/console.rb`   | The public API. Routes each call to a widget and a stream.                 |
+| `lib/dry/cli/ui/terminal.rb`  | One stream and what it can do: TTY, animation, colour, width, height.      |
+| `lib/dry/cli/ui/theme.rb`     | Levels (title, glyph, colour, stream) and operation states.                |
+| `lib/dry/cli/ui/duration.rb`  | The monotonic clock and `0.4s` / `1m 02s` / `1h 02m` formatting.           |
+| `lib/dry/cli/ui/widgets/*.rb` | One renderer per widget, each owning its rich form and its plain fallback. |
+
+Only files under `widgets/` and `terminal.rb` touch a TTY class. A future renderer replaces widgets, not `Console`.
+
+### Including costs nothing at boot
+
+`include Dry::CLI::UI` loads the mixin and nothing else. `Console`, the widgets and every TTY gem are autoloaded on first use, so a command that never calls `ui` never loads them. A spec pins this by checking `$LOADED_FEATURES` in a fresh process.
+
+### Streams
+
+Results go to `out`; everything about the command's own progress goes to `err`. Piping a command therefore captures its results and nothing else.
+
+| `out`                             | `err`                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------- |
+| `info`, `success`, `box`, `table` | `debug`, `warn`, `error`, `fatal`, `spinner`, `progress`, `tasks`, prompts |
+| `status` at `info` or `success`   | `status` at `debug`, `warn`, `error` or `fatal`                            |
+
+`#ui` uses the command's own `out` and `err` when dry-cli has set them (`Dry::CLI#call(out:, err:)`), and `$stdout` and `$stderr` otherwise. Every write flushes, so the two streams stay in order when both are piped to the same place.
+
+### Terminal detection and fallback
+
+Each stream is judged on its own:
+
+| Condition                          | Animation and cursor movement | Colour |
+| ---------------------------------- | ----------------------------- | ------ |
+| TTY                                | yes                           | yes    |
+| TTY with `NO_COLOR` set, non-empty | yes                           | no     |
+| TTY with `TERM=dumb`               | no                            | no     |
+| not a TTY                          | no                            | no     |
+
+`Console.new(color:, animate:, width:)` overrides detection. Without animation:
+
+| Widget                | Plain output                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| spinner               | `Label...` before the block, `✓ Label (1.2s)` or `✗ Label (1.2s)` after it                         |
+| progress              | `Label...` before, `✓ Label 1900/1900 (4.2s)` after, with the count reached                        |
+| tasks                 | each line printed once final: a group when it starts, a task when it ends, skipped ones at the end |
+| prompts               | the question on `err`, one line read from input                                                    |
+| boxes, tables, status | unchanged apart from colour                                                                        |
+
+### Spinners and progress bars
+
+Both run a block, return what it returns, and re-raise what it raises after marking the outcome `✗`. The elapsed time comes from a monotonic clock. `ui.progress` yields a handle with `advance(step = 1)`, `current` and `total`; progress is clamped to `0..total`, and `total: 0` is allowed.
+
+### Task trees
+
+The block declares the tree; nothing runs until it returns. Knowing the whole shape first is what lets the tree draw `├─` and `└─` correctly before the first task starts.
+
+```ruby
+ui.tasks("Deploy") do |t|
+  t.task("Build assets") { build }
+  t.group("Migrate") do |g|
+    g.task("users") { migrate(:users) }
+    g.task("orders") { migrate(:orders) }
+  end
+  t.group("Warm caches", concurrent: true) do |g|
+    g.task("fonts") { warm(:fonts) }
+    g.task("images") { warm(:images) }
+  end
+  t.task("Restart") { restart }
+end
+```
+
+- Tasks run in order. A group declared `concurrent: true`, or `ui.tasks(concurrent: true)` at the top level, runs its tasks at the same time on `concurrent-ruby` futures.
+- States are pending `○`, running `▸`, done `✓`, failed `✗` and skipped `–`. On an animated terminal a running task shows a turning spinner instead of `▸`, so a concurrent group is a multi-spinner.
+- When a task raises, it and its enclosing groups are marked failed, tasks already running beside it finish, tasks not yet started are marked skipped, and the first error is re-raised.
+- The live tree is redrawn in place with cursor movement, which cannot reach above the top of the screen. A tree with as many rows as the screen, or more, is printed line by line instead.
+- Task blocks should not write to the terminal while a live tree is drawn; the next redraw overwrites their output.
+
+### Tables
+
+`ui.table(rows, header:)` renders with box-drawing borders and a bold header. Tables are data, so they are never narrowed, truncated or rotated to fit the screen. TTY::Table otherwise measures the screen, prints a warning on STDERR, and turns a wide table on its side.
+
+### Prompts
+
+`ui.prompt(question, default:, choices:)` asks for a line of text, or for one of `choices` (an Array of names, or a Hash of names to the values returned). `ui.confirm(question, default: false)` asks yes or no.
+
+With an interactive input and output they use `tty-prompt`'s line editing and arrow-key menus. Otherwise they read lines, so answers can be piped in:
 
 ```bash
-eval "$(mycli completion bash)"    # ~/.bashrc
-eval "$(mycli completion zsh)"     # ~/.zshrc
+printf 'production\ny\n' | mycli deploy
 ```
 
-The script is regenerated when the shell starts, so a new command in the host application completes as soon as it ships. Pressing TAB runs nothing: the shell matches against a word list the script already carries.
+An empty answer takes the default. An exhausted input takes the default too, and a question with no default raises `Dry::CLI::UI::NonInteractiveError` rather than inventing an answer. An answer that is not a valid choice, or not yes or no, asks again.
 
-## Research
+### A TTY::Box defect worked around
 
-Research discovered a completion gems [https://github.com/rngtng/dry-cli-completion](https://github.com/rngtng/dry-cli-completion) however it lacks in a several areas (see below).
+With a fixed width, TTY::Box 0.7 wraps text but sizes the box from the unwrapped lines, so everything past the first rows is silently dropped. `Widgets::Box` wraps the text with `Strings::Wrap` first, leaving TTY::Box nothing to wrap.
 
-## Motivation
+## Acceptance criteria
 
-## 1. Why this exists when `dry-cli-completion` already does
+- [x] `include Dry::CLI::UI` gives a command `#ui`; including it loads no TTY gem.
+- [x] `#ui` writes to the streams dry-cli was called with.
+- [x] `debug`, `info`, `success`, `warn`, `error` and `fatal` draw white single-line boxes titled by level, wrapped, as wide as configured or the terminal less a margin, and never lose text.
+- [x] `spinner`, `progress` and `tasks` return their block's value, re-raise its error, and leave an outcome line with the elapsed time; progress shows percent, count and ETA.
+- [x] Task trees nest, run groups concurrently when asked, and mark failed and skipped tasks.
+- [x] Tables render rows and a header without truncation.
+- [x] Prompts work interactively and from piped input, and never block on an exhausted input.
+- [x] Output that is not a TTY, or runs under `TERM=dumb`, contains no escape sequences; `NO_COLOR` removes colour.
+- [x] The public API exposes no TTY object.
+- [x] 100% line and branch coverage, enforced by the suite.
 
-`rngtng/dry-cli-completion` (MIT, v2.0.0) works and is the obvious starting point. Read it before writing anything. It falls short in four specific ways, each of which is an acceptance criterion below.
+## Out of scope
 
-**1.1 A node carrying both a command and children loses its children.** `Input#extract_commands` branches `if sub_node.command ... elsif sub_node.children`. An application that registers an overview command at a group's bare name, so that `mycli db --help` can explain what the group is for, gets:
-
-```ruby
-register "db", DbOverview      # node now has a command
-register "db migrate", Migrate # ...and children, which are never walked
-```
-
-Completion for `mycli db <TAB>` offers `--help` and nothing else. The subcommands are invisible. This is not exotic: it is what any application does when it wants group-level help.
-
-**1.2 File arguments are dropped silently.** `Input#input_line` opens with `return if name.include?("<file>")`. A command whose argument name matches `/path/` produces no entry at all, and the generated script contains no `compgen -f`, no `-o default`, no `_filedir`. So `mycli deploy <TAB>` on a path argument completes nothing, which is the single most common thing a user wants.
-
-**1.3 There is no light entry point.** `command.rb` opens with `require "dry/cli/completion"`, which loads the generator, which loads `completely`. A host that only wants to register the command pays for the whole tree at boot. Measured: `require "dry/cli"` is 160ms, adding the completion gem makes it 190ms. Thirty milliseconds on every invocation of a command run once per shell.
-
-**1.4 zsh is a bashcompinit shim.** It emits `autoload -Uz +X bashcompinit && bashcompinit` and then bash. It works, but zsh users get no per-option descriptions and none of the native behaviour they expect.
-
-There is also a dependency argument. `completely` pulls `colsole`, `docopt_ng` and `mister_bin`, and `mister_bin` is itself a CLI framework. Four gems, one of them a second CLI framework, to emit a shell script. This gem generates the script itself and depends on `dry-cli` and `dry-inflector` only.
-
-## 2. Design decisions, and the measurements behind them
-
-These were settled by profiling a real dry-cli application (`tax_engine`, 27 commands, 33 options, 7 arguments). Reproduce them before overturning any of this.
-
-| Measurement                                               |           Time |
-| --------------------------------------------------------- | -------------: |
-| Bare `ruby -e ''`                                         |          100ms |
-| `require "dry/cli"`                                       |          160ms |
-| `require "dry/cli"` + `dry-cli-completion` + `completely` |          190ms |
-| `require "tax_engine"` (a gem with 2.5M lines of data)    |          520ms |
-| First touch of that host's data store                     |         +239ms |
-| **Registry walk and full completion spec build**          |    **0.067ms** |
-| Generated bash script for 27 commands                     | 257 lines, 9KB |
-
-### 2.1 Static generation, never a runtime callback
-
-Cobra and clap route every TAB press to a hidden `__complete` subcommand. That is correct for a Go or Rust binary that starts in 10ms. It is wrong here: a Ruby host costs 100ms at absolute best and 520ms in the case measured above. Half a second of dead air per keystroke is unusable, and no amount of lazy loading gets under the host's own require cost.
-
-So the generated script carries every completion it will ever offer, and TAB spawns no process. **Do not add a `__complete` command.** It was considered, costed at about 90 lines, and rejected on this measurement.
-
-### 2.2 The generator reads the registry and never forces anything beyond it
-
-The full walk plus spec build takes 0.067ms because it only touches objects dry-cli already holds. The moment an option's `values:` calls into a host's data, that cost lands at class-definition time on *every* invocation of the host, not just completion. In the profiled host that would have added 239ms of YAML parsing to shell startup.
-
-Enum values *declared on an option* are free and must be included:
-
-```ruby
-option :format, values: %w[json yaml table]   # completes json yaml table
-argument :component, values: %w[major minor]  # completes major minor
-```
-
-Values a host would have to compute are out of scope. There is no API for them. A host that wants them declares them as a constant on the option, where dry-cli validates the input and the generator sees it for free.
-
-### 2.3 Optimising the generator is pointless
-
-At 0.067ms, the work this gem does is 0.01% of the cheapest possible invocation. Native extensions were considered and rejected: they cannot reduce interpreter startup, which is where all the time goes, and they would put a compiled artifact in the dependency chain of every consumer. Keep it plain Ruby.
-
-### 2.4 Nothing loads until the command runs
-
-The host registers a command whose file pulls in no emitters:
-
-```ruby
-require "dry/cli/autocomplete/command"
-register "completion", Dry::CLI::Autocomplete::Command[MyCLI]
-```
-
-`command.rb` must define the command class and nothing else, and `require` the generator inside `#call`. This is the mistake in §1.3 and it cannot be retrofitted politely, so build it this way from the first commit. Verified working: after registering the shim, `defined?(Dry::CLI::Autocomplete::Generator)` is nil and `$LOADED_FEATURES` shows nothing, until the command is invoked.
-
-## 3. Reading a registry
-
-Everything needed is public API. **Do not use `instance_variable_get(:@node)`**, which is what the existing gem does. `Registry#get` returns a lookup result exposing `command`, `children` and `names`.
-
-This walk is proven against a foreign registry:
-
-```ruby
-def walk(registry, path = [], acc = [])
-  result = registry.get(path)
-  acc << [path, result.command, (result.children || {}).keys]
-  (result.children || {}).each_key { |name| walk(registry, path + [name], acc) }
-  acc
-end
-```
-
-Available per command: `.options` and `.arguments`. Per option: `name`, `type`, `values`, `aliases`, `default`, `desc`, `required?`, `boolean?`, `array?`. Per argument: `name`, `values`, `desc`, `required?`. Per node: `children`, `command`, `aliases`, `hidden`.
-
-Registering with `hidden: true` keeps a command out of `--help`; **the generator must skip hidden commands too**.
-
-Run against a registry with three commands, one of them nested, this produces:
-
-```
-(root)       -> version deploy db
-version      -> --format json plain
-deploy       -> --force -f staging production
-db           -> migrate
-db migrate   -> --step <file>
-```
-
-Note what that output demonstrates: the `-f` alias, enum values on both an option and an argument, a nested group with no command of its own, and a file argument detected.
-
-## 4. What the generated scripts must do
-
-### 4.1 Both shells, natively
-
-**bash** emits a `complete -F _mycli_completions mycli` function using `compgen -W` over the word list for the current command path, plus `compgen -f` where an argument takes a file.
-
-**zsh** emits a real `#compdef` script using `_arguments` and `_describe`, carrying each option's `desc` as help text. It is not a bashcompinit shim. This is the largest single piece of work in the gem, roughly 120 lines, and it is the reason the gem exists rather than a patch to the existing one.
-
-### 4.2 Program names that are not identifiers
-
-A host may be installed as `my-tool`. Shell function names cannot contain a dash, so derive the identifier with `Dry::Inflector#underscore` rather than a hand-rolled `gsub`. `Dry::CLI::Inflector` ships with dry-cli but only has `dasherize` and is marked `@api private`; do not use it.
-
-### 4.3 File arguments
-
-An argument whose name suggests a path should complete filenames. Matching on the name (`/file|path/`) is a heuristic and a poor one. Prefer letting the host be explicit, and fall back to the heuristic only when nothing is declared. Whatever the mechanism, the generated script must contain real file completion, which is the gap in §1.2.
-
-## 5. Testing
-
-**Never test only against one CLI.** A generator tested against a single registry bakes in that registry's shape. The suite must carry at least three fixture registries, and at least one must come from outside this project. Candidates: the examples in dry-cli's own repository, and Hanami's CLI.
-
-Each fixture must exercise: a nested group with a command at its bare name (§1.1), a file argument (§1.2), an option with `values`, a boolean flag, an option with an alias, and a hidden command.
-
-Validate generated output by running the shells, not by matching strings: `bash -n script` and `zsh -n script` both parse without executing. Golden-file the scripts so a change in output is visible in review.
-
-Pin the laziness contract with a spec, because it erodes silently:
-
-```ruby
-it "loads no emitter until the command runs" do
-  expect(defined?(Dry::CLI::Autocomplete::Generator)).to be_nil
-end
-```
-
-## 6. Acceptance criteria
-
-1. A node with both a command and children completes its children *and* its own options.
-1. Commands with file arguments produce real file completion in the generated script.
-1. `require "dry/cli/autocomplete/command"` loads no generator and no emitter.
-1. zsh output is a native `#compdef` script with per-option descriptions, not a bashcompinit shim.
-1. `bash -n` and `zsh -n` accept the generated scripts.
-1. Hidden commands do not appear.
-1. Program names containing dashes produce valid shell identifiers.
-1. Generating completions touches nothing outside the registry.
-1. Runtime dependencies are `dry-cli` and `dry-inflector`, and nothing else.
-1. The suite passes against at least one registry not written for this project.
-
-## 7. Out of scope
-
-- A `__complete` hidden command or any per-TAB process. See §2.1.
-- Values that require the host to load data. See §2.2.
-- Native extensions. See §2.3.
-- fish, PowerShell, nushell. Worth adding later; the emitter interface should make a fourth shell a new class rather than a new branch, but do not build them now.
-
-## 8. Scope estimate
-
-About 470 lines, most of it the zsh emitter and the specs.
-
-| Part                               | Lines |
-| ---------------------------------- | ----: |
-| Registry walk and spec builder     |    60 |
-| bash emitter                       |    60 |
-| zsh emitter                        |   120 |
-| Command shim and installation help |    30 |
-| Specs, including foreign fixtures  |   200 |
-
-Suggested order: walk, then bash, then zsh. The bash emitter proves the spec builder against a real shell quickly, and the zsh emitter is where the estimate is most likely to be wrong.
-
-## 9. Work units
-
-### 1. Registry walk and spec builder
-
-This section did not exist when the folder entered Building; an implementer found nothing here to build against and split it before writing any code, per the instruction that governs exactly this case. Four units, non-overlapping in the files they own, matching §8's table. #1 has no dependency on the others; #2 and #3 depend only on #1's *interface* below, not its code, so they can be built concurrently with each other and with WU1. WU4 integrates all three and is the last to land.
-
-Owns:
-
-- `lib/dry/cli/autocomplete/spec_builder.rb`,
-- `spec/dry/cli/autocomplete/spec_builder_spec.rb`,
-- `spec/support/fixtures/**`.
-
-Builds the fixture registries the whole suite depends on (§5: at least three, at least one from outside this project) and the walker (§3) that turns a registry into the `CompletionSpec` shape defined below. Owns file-argument *detection* (§4.3): the heuristic and any explicit declaration are resolved here, so emitters only ever read a plain `file?` flag and never re-derive it.
-
-Done when: builds a correct spec for every fixture; hidden commands are absent from it; a node with both a command and children reports both (§1.1 acceptance criterion); nothing outside the registry is touched (no file reads, no host constants beyond what `values:` already declared).
-
-### 2. `BASH` emitter
-
-Owns:
-
-- `lib/dry/cli/autocomplete/emitters/bash.rb`,
-- `spec/dry/cli/autocomplete/emitters/bash_spec.rb`.
-
-Consumes a `CompletionSpec` (build one by hand in specs against the documented shape; do not import WU1's fixtures until WU1 has landed) and emits the `complete -F` script per §4.1: `compgen -W` over each node's word list, `compgen -f` where `file?` is set.
-
-Done when: golden-file tests cover a fixture with a nested group, a file argument, an aliased option, and a hidden command absent from output; every golden file passes `bash -n`.
-
-### 3. `ZSH` emitter
-
-Owns:
-
-- `lib/dry/cli/autocomplete/emitters/zsh.rb`
-- spec/dry/cli/autocomplete/emitters/zsh_spec.rb\`.
-
-Same `CompletionSpec` input as WU2. Emits a native `#compdef` script using `_arguments`/`_describe` (§4.1), carrying each option's `desc`. Not a bashcompinit shim.
-
-Done when: golden-file tests as WU2, output validated with `zsh -n`, and per-option descriptions are visible in the generated `_describe` calls.
-
-### 4. Generator and command shim
-
-Owns:
-
-- `lib/dry/cli/autocomplete/generator.rb`,
-- `lib/dry/cli/autocomplete/command.rb`,
-- `spec/dry/cli/autocomplete/generator_spec.rb`,
-- `spec/dry/cli/autocomplete/command_spec.rb`.
-
-The generator is the small piece that ties a registry to an emitter: given a registry and a shell name, run WU1's spec builder, hand the result to WU2 or WU3's emitter, return the script. `command.rb` is the shim (§2.4): defines the command class, derives the program's shell-identifier with `Dry::Inflector#underscore` (§4.2, never a hand-rolled `gsub`), and `require`s `generator` only inside `#call`.
-
-Done when: the laziness spec from §5 passes (`defined?(Dry::CLI::Autocomplete::Generator)` is `nil` after requiring only `dry/cli/autocomplete/command`); dashed program names produce valid identifiers; the command actually produces working output end-to-end through a real emitter (a stub is fine mid-flight, but the unit is not done while one remains in the diff).
-
-### Interface contract between the units
-
-`SpecBuilder.call(registry, program_name:)` returns a `CompletionSpec`:
-
-- `program_name` — String, the shell-identifier-safe name (already run through `Dry::Inflector#underscore` by whichever unit constructs it — WU4's command shim owns this call, so WU1's builder just accepts the string it's given).
-- `nodes` — Array of `{path: Array<String>, options: [...], arguments: [...], children: Array<String>}`, one entry per node in the registry, hidden nodes excluded.
-- Each option: `{name:, type:, values:, aliases:, default:, desc:, required:, boolean:, array:}`.
-- Each argument: `{name:, values:, desc:, required:, file:}` — `file:` is the resolved boolean described under WU1 above.
-
-`Emitter.call(spec)` (both `Emitters::Bash` and `Emitters::Zsh`) takes one `CompletionSpec` and returns one String: the complete generated script. Neither emitter takes a registry, and neither knows what dry-cli's own API looks like.
+- Full-screen applications, alternate screen buffers, and a public cursor-positioning API. TTY::Cursor and TTY::Screen are used internally only.
+- Keyboard input beyond prompts.
+- Renderers other than the TTY toolkit. The widget boundary allows one later.
