@@ -46,17 +46,47 @@ module Dry
             attr_writer :current
           end
 
-          # Columns kept for the label, percentage, count and ETA around the bar.
-          CHROME = 34
+          # Columns kept for the brackets, percentage, count and ETA around the bar.
+          CHROME = 36
 
           # Narrowest bar drawn.
           MIN_BAR = 10
 
+          # A bar between brackets, painted as the configuration says: the
+          # finished part in {Configuration#bar_color}, and all of it on
+          # {Configuration#bar_background}.
+          #
+          # @param pastel [Pastel::Delegator] a no-op when colour is off
+          # @param config [Configuration]
+          # @param ratio [Float] how much is finished, from 0 to 1
+          # @param columns [Integer] the bar's width inside the brackets
+          # @return [String]
+          def self.bar(pastel, config, ratio, columns)
+            filled = (ratio * columns).floor
+            "[#{complete(pastel, config) * filled}#{incomplete(pastel, config) * (columns - filled)}]"
+          end
+
+          # @param pastel [Pastel::Delegator]
+          # @param config [Configuration]
+          # @return [String] one finished cell, painted
+          def self.complete(pastel, config)
+            pastel.decorate(config.bar_complete, *[config.bar_color, config.bar_background].compact)
+          end
+
+          # @param pastel [Pastel::Delegator]
+          # @param config [Configuration]
+          # @return [String] one unfinished cell, painted
+          def self.incomplete(pastel, config)
+            pastel.decorate(config.bar_incomplete, *[config.bar_background].compact)
+          end
+
           # @param terminal [Terminal]
           # @param clock [#call] returns monotonic seconds
-          def initialize(terminal, clock:)
+          # @param config [Configuration] where the bar's characters come from
+          def initialize(terminal, clock:, config: UI.config)
             @terminal = terminal
             @clock = clock
+            @config = config
           end
 
           # Runs the block with a progress bar.
@@ -72,6 +102,7 @@ module Dry
             started = clock.call
             bar = start(label, total)
             handle = Handle.new(total, bar)
+            terminal.started(handle, label, progress: handle)
             ok = false
             result = yield handle
             ok = true
@@ -79,6 +110,7 @@ module Dry
           ensure
             if handle
               bar&.stop
+              terminal.finished(handle, ok)
               summary = "#{label} #{handle.current}/#{total}"
               terminal.puts(Outcome.line(terminal, ok ? :done : :failed, summary, clock.call - started))
             end
@@ -92,6 +124,9 @@ module Dry
           # @return [#call]
           attr_reader :clock
 
+          # @return [Configuration]
+          attr_reader :config
+
           # @param label [String]
           # @param total [Integer]
           # @return [TTY::ProgressBar, nil]
@@ -102,12 +137,12 @@ module Dry
             end
 
             TTY::ProgressBar.new(
-              "#{label} :bar :percent  :current/:total  ETA :eta",
+              "#{label} [:bar] :percent  :current/:total  ETA :eta",
               total: total,
               width: [terminal.width - label.length - CHROME, MIN_BAR].max,
               output: terminal.io,
-              complete: "█",
-              incomplete: "░",
+              complete: Progress.complete(terminal.pastel, config),
+              incomplete: Progress.incomplete(terminal.pastel, config),
               clear: true,
               hide_cursor: true
             )

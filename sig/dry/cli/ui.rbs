@@ -11,6 +11,28 @@ module Dry
 
       def ui: () -> Console
 
+      def self.configure: () { (Configuration config) -> void } -> Configuration
+      def self.config: () -> Configuration
+      def self.reset!: () -> void
+
+      class Configuration
+        type spinner_definition = Symbol | { interval: Numeric, frames: Array[String] | String }
+        type bar_definition = Symbol | { complete: String, incomplete: String }
+
+        def spinner_format: (?spinner_definition value) -> spinner_definition
+        def spinner_format=: (spinner_definition value) -> spinner_definition
+        def bar_format: (?bar_definition value) -> bar_definition
+        def bar_format=: (bar_definition value) -> bar_definition
+        def bar_color: (?Symbol? value) -> Symbol?
+        def bar_color=: (Symbol? value) -> Symbol?
+        def bar_background: (?Symbol? value) -> Symbol?
+        def bar_background=: (Symbol? value) -> Symbol?
+        def spinner_frames: () -> Array[String]
+        def spinner_frame_seconds: () -> Float
+        def bar_complete: () -> String
+        def bar_incomplete: () -> String
+      end
+
       class Line
         def self.call: [T] (^(Line) -> T job, Line line) -> T
         def initialize: () ?{ (String detail) -> void } -> void
@@ -33,7 +55,10 @@ module Dry
         def status: (*_ToS words, ?level: Symbol) -> nil
         def popup: (*_ToS paragraphs, ?title: String?, ?width: Integer?) -> nil
         def spinner: [T] (String label) { (Line line) -> T } -> T
+        def multi_spinner: (String title, ?concurrent: (bool | Integer)) { (untyped spinners) -> void } -> Array[untyped]
         def progress: [T] (String label, total: Integer) { (untyped progress) -> T } -> T
+        def multi_progress: (String title, ?concurrent: (bool | Integer)) { (untyped bars) -> void } -> Array[untyped]
+        def status_bar: [T] (?String? title, ?hints: Array[String] | String) { () -> T } -> T
         def tasks: (?String? title, ?concurrent: (bool | Integer)) { (untyped tasks) -> void } -> nil
         def table: (Array[Array[_ToS]] rows, ?header: Array[_ToS]?) -> nil
         def prompt: (String question, ?default: untyped, ?choices: (Array[String] | Hash[String, untyped])?) -> untyped

@@ -51,7 +51,7 @@ When the output is piped, and the import fails part way:
 Loading tax rules...
 ✓ Loading tax rules (0.3s)
 Importing rules...
-✗ Importing rules 1482/1900 (4.1s)
+𝘅 Importing rules 1482/1900 (4.1s)
 ┌─ Error ──────────────────────────────────────────────────┐
 │                                                          │
 │  Import failed                                           │
@@ -62,7 +62,7 @@ Importing rules...
 └──────────────────────────────────────────────────────────┘
 ```
 
-On a terminal the spinner turns and the bar fills in place, with percent, count and ETA, and each is replaced by the same `✓` or `✗` line when its block ends.
+On a terminal the spinner turns and the bar fills in place, with percent, count and ETA, and each is replaced by the same `✓` or `𝘅` line when its block ends.
 
 Include the module once in a base class and every command has `ui`. Including it loads nothing: the TTY gems load the first time `ui` is used.
 
@@ -107,7 +107,7 @@ ui.status "Disk nearly full", level: :warn               # ⚠ Disk nearly full
 rules = ui.spinner("Loading tax rules") { load_rules }
 ```
 
-Returns the block's value. Leaves `✓ Loading tax rules (0.3s)` behind, or `✗` and the re-raised error when the block fails.
+Returns the block's value. Leaves `✓ Loading tax rules (0.3s)` behind, or `𝘅` and the re-raised error when the block fails.
 
 The block is given a `Dry::CLI::UI::Line`, for work that has more to say while it runs, or that can fail without raising:
 
@@ -118,7 +118,7 @@ ui.spinner("Importing rules") do |line|
 end
 ```
 
-`line.detail = "..."` shows text after the label, redrawn in place as it changes. Piped, the detail is kept and never printed, since it can change many times a second. `line.fail(reason)` ends the spinner as `✗ Importing rules: 3 rules skipped (4.1s)` without raising, and the block's value is still returned. `line.failed?` and `line.reason` read it back. Every `Line` method is safe to call from any thread.
+`line.detail = "..."` shows text after the label, redrawn in place as it changes. Piped, the detail is kept and never printed, since it can change many times a second. `line.fail(reason)` ends the spinner as `𝘅 Importing rules: 3 rules skipped (4.1s)` without raising, and the block's value is still returned. `line.failed?` and `line.reason` read it back. Every `Line` method is safe to call from any thread.
 
 ### Progress bars
 
@@ -131,7 +131,126 @@ ui.progress("Importing rules", total: rules.size) do |bar|
 end
 ```
 
-The bar shows percent, `current/total` and ETA, and ends with `✓ Importing rules 1900/1900 (4.2s)`.
+The bar shows percent, `current/total` and ETA, `Importing rules [◼◼◼◼◼◼    ] 61%  1159/1900  ETA 2.7s`, and ends with `✓ Importing rules 1900/1900 (4.2s)`. On a terminal the `◼`s are green and the whole bar sits on a gray background; see [Configuration](#configuration) to change either.
+
+### Several spinners at once
+
+```ruby
+ui.multi_spinner("Fetching", concurrent: 2) do |m|
+  m.spinner("fonts") { fetch(:fonts) }
+  m.spinner("images") do |line|
+    fetch(:images) { |done, all| line.detail = "#{done} of #{all}" }
+  end
+  m.spinner("video") { fetch(:video) }
+end
+```
+
+The block declares the jobs; they run once it returns, all at once by default, or at most `concurrent: 2` at a time. It returns what each job returned, in declaration order. While they run, every job has a row of its own under a headline spinner, and a job still waiting shows `[ ]`:
+
+```text
+[⠹] Fetching
+├─ [⠹] fonts
+├─ [⠹] images 12 of 40
+└─ [ ] video
+```
+
+Once they finish, the headline ends `✓`, or `𝘅` when any job failed:
+
+```text
+[𝘅] Fetching (0.5s)
+├─ [✓] fonts (0.3s)
+├─ [𝘅] images: 2 timed out (0.3s)
+└─ [✓] video (0.2s)
+```
+
+Each job is given a `Line`, as a single spinner's block is. When a job raises, jobs already running finish, jobs not yet started are marked skipped (`[—]`), and the error is re-raised. Piped, it prints `Fetching...`, then each job's outcome as it ends, then the headline's.
+
+### Several progress bars at once
+
+```ruby
+ui.multi_progress("Downloading") do |m|
+  files.each do |file|
+    m.progress(file.name, total: file.size) do |bar|
+      download(file) { |bytes| bar.advance(bytes) }
+    end
+  end
+end
+```
+
+The same shape as `multi_spinner`, with a bar per job and a headline bar that counts them all. Bars start and end in the same columns, and counts are right-aligned:
+
+```text
+[⠋] Downloading      [◼◼◼◼             ]  27%   66/240  ETA 2.1s
+├─ [⠋] fonts.zip     [◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼ ]  95%    38/40  ETA 0.1s
+├─ [⠋] images.tar.gz [◼◼◼              ]  23%   28/120  ETA 2.4s
+└─ [ ] video.mp4
+```
+
+Each job is given the same handle as `ui.progress`, with `advance(step = 1)`, `current` and `total`. A finished job's row reads `[✓] fonts.zip 40/40 (0.1s)`, and the headline's `[✓] Downloading 240/240 (0.3s)`.
+
+### Example: fetching many URLs
+
+With `multi_spinner`, each URL gets a spinner, and the call returns every page in the same order as `urls`. Nothing writes to a shared file from several threads:
+
+```ruby
+bodies = ui.multi_spinner("Fetching #{urls.size} URLs", concurrent: 8) do |m|
+  urls.each { |url| m.spinner(url) { fetch(url) } }
+end
+
+File.write("urls.txt", bodies.join("\n"))
+```
+
+With `multi_progress`, each URL gets a bar that fills one byte at a time as the body arrives. A bar's `total` is fixed when it is declared, so a `HEAD` request asks each URL for its size first:
+
+```ruby
+found = urls.filter_map do |url|
+  [url, content_length(url)]
+rescue StandardError => e
+  ui.status "#{url}: #{e.message}", level: :warn
+  nil
+end
+
+bodies = ui.multi_progress("Fetching #{found.size} URLs", concurrent: 8) do |m|
+  found.each do |url, size|
+    m.progress(url, total: size || 1) do |bar|
+      body = download(url) { |bytes| bytes.times { bar.advance } if size }
+      bar.advance unless size # no Content-Length: done in one step
+      body
+    end
+  end
+end
+
+File.write("urls.txt", bodies.join("\n"))
+```
+
+The two helpers, with `Net::HTTP`:
+
+```ruby
+require "net/http"
+
+def content_length(url)
+  uri = URI(url)
+  Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") do |http|
+    http.head(uri.request_uri).content_length # nil when the server does not say
+  end
+end
+
+def download(url)
+  uri = URI(url)
+  body = +""
+  Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https") do |http|
+    http.request_get(uri.request_uri) do |response|
+      response.read_body do |chunk|
+        body << chunk
+        yield chunk.bytesize
+      end
+    end
+  end
+  body
+end
+```
+
+In both, at most eight requests run at once and the rest wait as `[ ]` rows. The headline counts every URL, and in `multi_progress` every byte. A server that sends no `Content-Length` gets a bar of one unit, which sits at 0% and fills when its download ends. These helpers are kept short: a real one follows redirects, and sends `Accept-Encoding: identity` so the bytes counted match `Content-Length`. With more URLs than the screen has rows, each finished URL prints one line instead.
 
 ### Task trees
 
@@ -156,19 +275,19 @@ On a terminal, once it finishes:
 
 ```text
 Deploy
-├─ ✓ Build assets (0.4s)
-├─ ✓ Migrate (0.3s)
-│  ├─ ✓ users (0.1s)
-│  └─ ✓ orders (0.2s)
-├─ ✓ Warm caches (0.5s)
-│  ├─ ✓ fonts (0.5s)
-│  └─ ✓ images (0.3s)
-└─ ✓ Restart (0.3s)
+├─ [✓] Build assets (0.4s)
+├─ [✓] Migrate (0.3s)
+│  ├─ [✓] users (0.1s)
+│  └─ [✓] orders (0.2s)
+├─ [✓] Warm caches (0.5s)
+│  ├─ [✓] fonts (0.5s)
+│  └─ [✓] images (0.3s)
+└─ [✓] Restart (0.3s)
 ```
 
-While it runs, the tree redraws in place and every running task has its own spinner. Piped, each line is printed once it is final, and a group's line appears as `▸` when it starts. `concurrent: true` runs a group's tasks at the same time, on a group or on `ui.tasks` itself, and `concurrent: 3` runs at most three at once. When a task raises, it is marked `✗`, tasks already running finish, the rest are marked skipped (`–`), and the error is re-raised.
+While it runs, the tree redraws in place and every running task has its own spinner. Every row is marked in brackets, in bold yellow while it waits, `[ ]`, and while it runs, a turning `[⠏]`; then a green `[✓]` when it is done, a red `[𝘅]` when it failed, or a yellow `[—]` when it was skipped. Piped, each line is printed once it is final, and a group's line appears as `[▸]` when it starts. `concurrent: true` runs a group's tasks at the same time, on a group or on `ui.tasks` itself, and `concurrent: 3` runs at most three at once. When a task raises, it is marked `[𝘅]`, tasks already running finish, the rest are marked skipped (`[—]`), and the error is re-raised.
 
-Each task is given a `Line`, as a spinner's block is. Its detail is drawn after the task's name while it runs, and `line.fail(reason)` marks the task `✗ name: reason` and its groups `✗`, while the rest of the tree runs on:
+Each task is given a `Line`, as a spinner's block is. Its detail is drawn after the task's name while it runs, and `line.fail(reason)` marks the task `𝘅 name: reason` and its groups `𝘅`, while the rest of the tree runs on:
 
 ```ruby
 ui.tasks("Fetching", concurrent: 4) do |t|
@@ -178,6 +297,66 @@ ui.tasks("Fetching", concurrent: 4) do |t|
     rescue Timeout::Error
       line.fail("timed out")
     end
+  end
+end
+```
+
+### Status bar
+
+```ruby
+ui.status_bar("deploy", hints: ["^C cancel"]) do
+  ui.spinner("Building assets") { build }
+  ui.multi_progress("Uploading", concurrent: 2) { |m| ... }
+  ui.tasks("Migrate") { |t| ... }
+end
+```
+
+While the block runs, the bottom of the screen shows how the whole command is doing, under a rule: what started last, how many things are running, done and failed, a bar over every progress bar so far, the elapsed time, and your hints at the right edge. Everything the widgets print scrolls above it, and it disappears when the block ends:
+
+```text
+✓ Building assets (0.2s)
+[⠙] Uploading    [◼◼◼◼◼◼◼◼◼◼◼◼◼◼                         ]  37%   49/132  ETA 0.3s
+├─ [✓] app.js 40/40 (0.2s)
+├─ [⠙] app.css   [◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼◼          ]  75%     9/12  ETA 0.1s
+└─ [⠙] fonts.zip [                                       ]   0%     0/80  ETA --
+──────────────────────────────────────────────────────────────────────────────────────────
+ ⠸ deploy · fonts.zip · 2 running · 2 done · [◼◼◼       ] 37% · 0.4s            ^C cancel
+```
+
+Nothing reports to it by hand: every `spinner`, `progress`, `multi_spinner`, `multi_progress` and task started inside the block does so on its own. Hints that do not fit are left out, and a status that does not fit is cut short with `…`.
+
+It sets no scroll region, so the scrollback keeps everything, and an interrupted command leaves nothing behind. Piped, or without animation, it just runs the block. Write through `ui` while it runs: a bare `puts` lands where the bar is, until the next `ui` call draws the bar again.
+
+### Putting it together
+
+```ruby
+class Deploy < Dry::CLI::Command
+  include Dry::CLI::UI
+
+  def call(**)
+    ui.status_bar("deploy", hints: ["^C cancel"]) do
+      assets = ui.spinner("Building assets") { build_assets }
+
+      ui.multi_progress("Uploading", concurrent: 3) do |m|
+        assets.each do |asset|
+          m.progress(asset.name, total: asset.bytesize) do |bar|
+            upload(asset) { |sent| bar.advance(sent) }
+          end
+        end
+      end
+
+      ui.multi_spinner("Warming caches") do |m|
+        regions.each do |region|
+          m.spinner(region) do |line|
+            warm(region) { |host| line.detail = host }
+          end
+        end
+      end
+    end
+
+    ui.success "Deployed #{assets.size} assets"
+  rescue => e
+    ui.error("Deploy failed", e.message)
   end
 end
 ```
@@ -218,15 +397,37 @@ When the input runs out, a prompt returns its default, or raises `Dry::CLI::UI::
 
 ## Where output goes
 
-| To `out` (results)                                          | To `err` (everything else)                                                               |
-| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `info`, `success`, `box`, `table`, `status` at those levels | `debug`, `warn`, `error`, `fatal`, `popup`, spinners, progress bars, task trees, prompts |
+| To `out` (results)                                          | To `err` (everything else)                                                                                                  |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `info`, `success`, `box`, `table`, `status` at those levels | `debug`, `warn`, `error`, `fatal`, `popup`, spinners, progress bars, their multi forms, task trees, the status bar, prompts |
 
 `mycli export > rules.csv` therefore writes only the command's results to the file, while its progress stays on the screen. `ui` writes to the streams dry-cli was called with, so `Dry::CLI.new(registry).call(out: io, err: io)` captures everything.
 
 A stream that is not a terminal, or runs under `TERM=dumb`, gets no animation, no cursor movement and no escape codes. [`NO_COLOR`](https://no-color.org) turns colour off and leaves animation on.
 
 ## Configuration
+
+Spinners and bars look the same everywhere, and are set once for the whole process:
+
+```ruby
+Dry::CLI::UI.configure do
+  spinner_format :dots                                 # any TTY::Spinner format name
+  bar_format(complete: "◼", incomplete: " ")           # or any TTY::ProgressBar bar format name, such as :box
+  bar_color :green                                     # the finished part: any Pastel style, or nil
+  bar_background :on_bright_black                      # the whole bar: any Pastel style, or nil
+end
+```
+
+Those are the defaults: spinners turn through `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` ten times a second, and bars draw a green `◼` for each finished part on a gray track. Without colour the track is blank, and the brackets still show where the bar ends. Every spinner reads the same format, including `multi_spinner`, task trees and the status bar, and every bar reads the same characters and colours. The formats also take a definition of your own:
+
+```ruby
+Dry::CLI::UI.configure do |config|
+  config.spinner_format = { interval: 8, frames: %w[◐ ◓ ◑ ◒] }   # frames per second, and the frames
+  config.bar_format = { complete: "#", incomplete: "." }
+end
+```
+
+An unknown name or a malformed definition raises `ArgumentError` when it is set.
 
 Override `ui` to configure the console:
 

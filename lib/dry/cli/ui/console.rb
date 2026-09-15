@@ -64,13 +64,15 @@ module Dry
         # @param width [Integer, nil] force the terminal width; nil asks the terminal
         # @param box_width [Integer, nil] box width in columns; nil fills the terminal
         # @param clock [#call] returns monotonic seconds
+        # @param config [Configuration] spinner and bar formats; {UI.config} by default
         def initialize(out: $stdout, err: $stderr, input: $stdin, env: ENV, color: nil, animate: nil,
-                       width: nil, box_width: nil, clock: Duration::CLOCK)
+                       width: nil, box_width: nil, clock: Duration::CLOCK, config: UI.config)
           @out = Terminal.new(out, env: env, color: color, animate: animate, width: width)
           @err = Terminal.new(err, env: env, color: color, animate: animate, width: width)
           @input = input
           @box_width = box_width
           @clock = clock
+          @config = config
         end
 
         # A framed panel. Given a level, it takes that level's title, colour
@@ -142,7 +144,27 @@ module Dry
         def spinner(label, &)
           raise ArgumentError, "spinner needs a block" unless block_given?
 
-          Widgets::Spinner.new(err, clock: clock).run(label, &)
+          Widgets::Spinner.new(err, clock: clock, config: config).run(label, &)
+        end
+
+        # Runs several jobs at once, each under a spinner of its own, beneath a
+        # headline spinner. Each job is given a {Line}. See {Widgets::MultiSpinner}.
+        #
+        # @example
+        #   ui.multi_spinner("Fetching", concurrent: 3) do |m|
+        #     assets.each { |asset| m.spinner(asset.name) { fetch(asset) } }
+        #   end
+        #
+        # @param title [String] the headline
+        # @param concurrent [Boolean, Integer] all at once (the default), one at
+        #   a time, or at most this many at once
+        # @yieldparam spinners [Widgets::MultiSpinner::Builder] declares each `spinner`
+        # @return [Array<Object>] what each job returned, in declaration order
+        # @raise [ArgumentError] without a block, or with an invalid concurrent
+        def multi_spinner(title, concurrent: true, &)
+          raise ArgumentError, "multi_spinner needs a block" unless block_given?
+
+          Widgets::MultiSpinner.new(err, clock: clock, config: config).run(title, concurrent: concurrent, &)
         end
 
         # Runs a block with a progress bar showing percent, count and ETA.
@@ -155,7 +177,30 @@ module Dry
         def progress(label, total:, &)
           raise ArgumentError, "progress needs a block" unless block_given?
 
-          Widgets::Progress.new(err, clock: clock).run(label, total: total, &)
+          Widgets::Progress.new(err, clock: clock, config: config).run(label, total: total, &)
+        end
+
+        # Runs several jobs at once, each with a progress bar of its own,
+        # beneath a headline bar that counts them all. Each job is given a
+        # {Widgets::Progress::Handle}. See {Widgets::MultiProgress}.
+        #
+        # @example
+        #   ui.multi_progress("Downloading") do |m|
+        #     files.each do |file|
+        #       m.progress(file.name, total: file.size) { |bar| download(file) { |n| bar.advance(n) } }
+        #     end
+        #   end
+        #
+        # @param title [String] the headline
+        # @param concurrent [Boolean, Integer] all at once (the default), one at
+        #   a time, or at most this many at once
+        # @yieldparam bars [Widgets::MultiProgress::Builder] declares each `progress`
+        # @return [Array<Object>] what each job returned, in declaration order
+        # @raise [ArgumentError] without a block, or with an invalid concurrent
+        def multi_progress(title, concurrent: true, &)
+          raise ArgumentError, "multi_progress needs a block" unless block_given?
+
+          Widgets::MultiProgress.new(err, clock: clock, config: config).run(title, concurrent: concurrent, &)
         end
 
         # Declares a tree of tasks, then runs it, showing each task's state
@@ -181,7 +226,31 @@ module Dry
         def tasks(title = nil, concurrent: false, &)
           raise ArgumentError, "tasks needs a block" unless block_given?
 
-          Widgets::Tasks.new(err, clock: clock).run(title, concurrent: concurrent, &)
+          Widgets::Tasks.new(err, clock: clock, config: config).run(title, concurrent: concurrent, &)
+        end
+
+        # Keeps a status line at the bottom of the screen while the block runs,
+        # saying how the command is doing overall. Every spinner, progress
+        # bar, multi widget and task tree started inside the block reports to
+        # it. Without an animated `err` it does nothing but run the block, and
+        # inside another status bar it does the same. See {StatusBar}.
+        #
+        # @example
+        #   ui.status_bar("deploy", hints: ["^C cancel"]) do
+        #     ui.multi_progress("Uploading") { |m| ... }
+        #     ui.tasks("Migrate") { |t| ... }
+        #   end
+        #
+        # @param title [String, nil] shown first, in bold
+        # @param hints [Array<String>] shown at the right edge
+        # @return [Object] whatever the block returns
+        # @raise [ArgumentError] without a block
+        def status_bar(title = nil, hints: [], &)
+          raise ArgumentError, "status_bar needs a block" unless block_given?
+          return yield if !err.animated? || err.reporter
+
+          others = out.animated? ? [out] : []
+          StatusBar.new(err, others: others, title: title, hints: Array(hints), clock: clock, config: config).run(&)
         end
 
         # Prints a table to `out`.
@@ -236,6 +305,9 @@ module Dry
 
         # @return [#call]
         attr_reader :clock
+
+        # @return [Configuration]
+        attr_reader :config
 
         # @param theme [Theme::Level]
         # @return [Terminal]

@@ -55,5 +55,7 @@ RSpec.configure do |config|
   end
   config.around do |example|
     Timeout.timeout(10) { example.run }
+  ensure
+    Dry::CLI::UI.reset!
   end
 end

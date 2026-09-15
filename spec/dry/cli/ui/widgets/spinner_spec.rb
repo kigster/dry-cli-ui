@@ -19,7 +19,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Spinner do
 
     it "marks a failure and re-raises" do
       expect { spinner.run("Loading") { raise "boom" } }.to raise_error(RuntimeError, "boom")
-      expect(io.string).to end_with("✗ Loading (0.5s)\n")
+      expect(io.string).to end_with("𝘅 Loading (0.5s)\n")
     end
 
     it "gives the block a line" do
@@ -33,12 +33,12 @@ RSpec.describe Dry::CLI::UI::Widgets::Spinner do
 
     it "marks a failure the block reports, and still returns its value" do
       expect(spinner.run("Loading") { |line| line.fail("3 rules skipped") && :partial }).to eq(:partial)
-      expect(io.string).to end_with("✗ Loading: 3 rules skipped (0.5s)\n")
+      expect(io.string).to end_with("𝘅 Loading: 3 rules skipped (0.5s)\n")
     end
 
     it "names the reason when the block reports a failure and then raises" do
       expect { spinner.run("Loading") { |line| line.fail("offline") && raise("boom") } }.to raise_error("boom")
-      expect(io.string).to end_with("✗ Loading: offline (0.5s)\n")
+      expect(io.string).to end_with("𝘅 Loading: offline (0.5s)\n")
     end
   end
 
@@ -57,7 +57,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Spinner do
 
     it "stops the spinner when the block fails" do
       expect { spinner.run("Loading") { raise "boom" } }.to raise_error("boom")
-      expect(plain(io.string)).to end_with("✗ Loading (0.5s)\n")
+      expect(plain(io.string)).to end_with("𝘅 Loading (0.5s)\n")
     end
 
     it "redraws the detail after the label" do
@@ -79,7 +79,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Spinner do
 
     it "marks a failure the block reports" do
       spinner.run("Loading") { |line| line.fail("offline") }
-      expect(plain(io.string)).to end_with("✗ Loading: offline (0.5s)\n")
+      expect(plain(io.string)).to end_with("𝘅 Loading: offline (0.5s)\n")
     end
   end
 end

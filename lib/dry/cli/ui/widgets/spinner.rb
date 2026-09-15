@@ -18,9 +18,11 @@ module Dry
         class Spinner
           # @param terminal [Terminal]
           # @param clock [#call] returns monotonic seconds
-          def initialize(terminal, clock:)
+          # @param config [Configuration] where the frames come from
+          def initialize(terminal, clock:, config: UI.config)
             @terminal = terminal
             @clock = clock
+            @config = config
           end
 
           # Runs the block under a spinner.
@@ -33,6 +35,7 @@ module Dry
             spinner = nil
             line = Line.new { |text| spinner&.update(detail: text.empty? ? "" : " #{text}") }
             started = clock.call
+            terminal.started(line, label)
             spinner = start(label)
             ok = false
             result = Line.call(job, line)
@@ -40,6 +43,7 @@ module Dry
             result
           ensure
             spinner&.stop
+            terminal.finished(line, ok)
             terminal.puts(Outcome.line(terminal, ok ? :done : :failed, line.summary(label), clock.call - started))
           end
 
@@ -51,6 +55,9 @@ module Dry
           # @return [#call]
           attr_reader :clock
 
+          # @return [Configuration]
+          attr_reader :config
+
           # @param label [String]
           # @return [TTY::Spinner, nil] the running spinner, or nil when not animating
           def start(label)
@@ -59,8 +66,9 @@ module Dry
               return
             end
 
-            TTY::Spinner.new(":spinner #{label}:detail", output: terminal.io, format: :dots, hide_cursor: true,
-                                                         clear: true)
+            TTY::Spinner.new(":spinner #{label}:detail", output: terminal.io, frames: config.spinner_frames,
+                                                         interval: 1.0 / config.spinner_frame_seconds,
+                                                         hide_cursor: true, clear: true)
                         .tap { |spinner| spinner.update(detail: "") }
                         .tap(&:auto_spin)
           end

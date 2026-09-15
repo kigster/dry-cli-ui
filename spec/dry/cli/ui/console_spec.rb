@@ -108,10 +108,85 @@ RSpec.describe Dry::CLI::UI::Console do
     it { expect { ui.progress("Importing", total: 1) }.to raise_error(ArgumentError, /needs a block/) }
   end
 
+  describe "#multi_spinner" do
+    it "runs every job on err and returns their values" do
+      expect(ui.multi_spinner("Fetching") { |m| m.spinner("fonts") { :fonts } }).to eq([:fonts])
+      expect(err.string).to start_with("Fetching...\n").and include("  [✓] fonts")
+      expect(out.string).to be_empty
+    end
+
+    it { expect { ui.multi_spinner("Fetching") }.to raise_error(ArgumentError, /needs a block/) }
+  end
+
+  describe "#multi_progress" do
+    it "runs every job on err and returns their values" do
+      expect(ui.multi_progress("Downloading") { |m| m.progress("a", total: 1) { |bar| bar.advance && :a } }).to eq([:a])
+      expect(err.string).to include("  [✓] a 1/1").and end_with("1/1 (1.5s)\n")
+      expect(out.string).to be_empty
+    end
+
+    it { expect { ui.multi_progress("Downloading") }.to raise_error(ArgumentError, /needs a block/) }
+  end
+
+  describe "#status_bar" do
+    it { expect { ui.status_bar("deploy") }.to raise_error(ArgumentError, /needs a block/) }
+
+    it "only runs the block when err is not a terminal" do
+      expect(ui.status_bar("deploy") { :done }).to eq(:done)
+      expect(err.string).to be_empty
+    end
+
+    context "on a terminal" do
+      subject(:ui) { described_class.new(out: out, err: err, env: {}, width: 80, clock: -> { 0.0 }) }
+
+      let(:err) { FakeTTY.new }
+      let(:out) { FakeTTY.new }
+      let(:frames) { [] }
+
+      before { allow(TTY::Screen).to receive(:height).and_return(24) }
+
+      it "hears from every widget run inside it, and leaves only their output behind" do
+        status = -> { plain(Screen.new(err.string).lines.last) }
+        result = ui.status_bar("deploy", hints: "^C cancel") do
+          ui.spinner("Loading") do
+            sleep(0.12)
+            frames << status.call
+          end
+          ui.progress("Importing", total: 2) { |bar| bar.advance(2) }
+          ui.multi_progress("Uploading") { |m| m.progress("a", total: 4) { |bar| bar.advance(2) } }
+          ui.tasks("Migrate") { |t| t.task("users") { |line| line.fail("locked") } }
+          frames << status.call
+          :deployed
+        end
+        expect(result).to eq(:deployed)
+        expect(frames.first).to include("deploy · Loading · 1 running").and end_with("^C cancel")
+        expect(frames.last).to include("3 done · 1 failed · [◼◼◼◼◼◼    ] 66%")
+        expect(plain(Screen.new(err.string).lines.last)).to eq("└─ [𝘅] users: locked (0.0s)")
+      end
+
+      it "leaves results alone when out is not a terminal" do
+        piped = StringIO.new
+        described_class.new(out: piped, err: err, env: {}, width: 80).status_bar { ui.info("hello") }
+        expect(piped.string).not_to include("\e[J")
+      end
+
+      it "keeps the console's results above it too" do
+        ui.status_bar { ui.info("hello") }
+        expect(out.string).to include("hello", "\e[J")
+      end
+
+      it "only runs the block inside another status bar" do
+        inner = nil
+        ui.status_bar("outer") { ui.status_bar("inner") { inner = err.string.dup } }
+        expect(inner).not_to include("inner")
+      end
+    end
+  end
+
   describe "#tasks" do
     it "runs the tree on err" do
       ui.tasks("Deploy") { |t| t.task("Build") { nil } }
-      expect(err.string).to eq("Deploy\n└─ ✓ Build (0.5s)\n")
+      expect(err.string).to eq("Deploy\n└─ [✓] Build (0.5s)\n")
     end
 
     it { expect { ui.tasks("Deploy") }.to raise_error(ArgumentError, /needs a block/) }

@@ -63,7 +63,7 @@ Example output, piped, when the import fails part way:
 Loading tax rules...
 ✓ Loading tax rules (0.3s)
 Importing rules...
-✗ Importing rules 1482/1900 (4.1s)
+𝘅 Importing rules 1482/1900 (4.1s)
 ┌─ Error ──────────────────────────────────────────────────┐
 │                                                          │
 │  Import failed                                           │
@@ -89,8 +89,11 @@ ui.error(...)
 ui.fatal(...)
 
 ui.spinner(...)
+ui.multi_spinner(...)
 ui.progress(...)
+ui.multi_progress(...)
 ui.status(...)
+ui.status_bar(...)
 
 ui.box(...)
 ui.popup(...)
@@ -226,10 +229,10 @@ Only files under `widgets/` and `terminal.rb` touch a TTY class. A future render
 
 Results go to `out`; everything about the command's own progress goes to `err`. Piping a command therefore captures its results and nothing else.
 
-| `out`                             | `err`                                                                               |
-| --------------------------------- | ----------------------------------------------------------------------------------- |
-| `info`, `success`, `box`, `table` | `debug`, `warn`, `error`, `fatal`, `popup`, `spinner`, `progress`, `tasks`, prompts |
-| `status` at `info` or `success`   | `status` at `debug`, `warn`, `error` or `fatal`                                     |
+| `out`                             | `err`                                                                                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `info`, `success`, `box`, `table` | `debug`, `warn`, `error`, `fatal`, `popup`, `spinner`, `multi_spinner`, `progress`, `multi_progress`, `tasks`, `status_bar`, prompts |
+| `status` at `info` or `success`   | `status` at `debug`, `warn`, `error` or `fatal`                                                                                      |
 
 `#ui` uses the command's own `out` and `err` when dry-cli has set them (`Dry::CLI#call(out:, err:)`), and `$stdout` and `$stderr` otherwise. Every write flushes, so the two streams stay in order when both are piped to the same place.
 
@@ -248,8 +251,10 @@ Each stream is judged on its own:
 
 | Widget                | Plain output                                                                                                                                                                     |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| spinner               | `Label...` before the block, `✓ Label (1.2s)` or `✗ Label (1.2s)` after it; a `Line`'s detail is never printed, a `Line#fail` reason follows the label: `✗ Label: reason (1.2s)` |
+| spinner               | `Label...` before the block, `✓ Label (1.2s)` or `𝘅 Label (1.2s)` after it; a `Line`'s detail is never printed, a `Line#fail` reason follows the label: `𝘅 Label: reason (1.2s)` |
 | progress              | `Label...` before, `✓ Label 1900/1900 (4.2s)` after, with the count reached                                                                                                      |
+| multi_spinner         | `Title...` before, each job's outcome indented as it ends, skipped ones at the end, then the headline's outcome                                                                  |
+| multi_progress        | as multi_spinner, each outcome with its count: `✓ a.zip 40/40 (0.1s)`, and the headline with the total count                                                                     |
 | tasks                 | each line printed once final: a group when it starts, a task when it ends, skipped ones at the end                                                                               |
 | prompts               | the question on `err`, one line read from input                                                                                                                                  |
 | boxes, tables, status | unchanged apart from colour                                                                                                                                                      |
@@ -257,7 +262,7 @@ Each stream is judged on its own:
 
 ### Spinners and progress bars
 
-Both run a block, return what it returns, and re-raise what it raises after marking the outcome `✗`. The elapsed time comes from a monotonic clock. `ui.progress` yields a handle with `advance(step = 1)`, `current` and `total`; progress is clamped to `0..total`, and `total: 0` is allowed.
+Both run a block, return what it returns, and re-raise what it raises after marking the outcome `𝘅`. The elapsed time comes from a monotonic clock. `ui.progress` yields a handle with `advance(step = 1)`, `current` and `total`; progress is clamped to `0..total`, and `total: 0` is allowed.
 
 `ui.spinner` yields a `Dry::CLI::UI::Line`, the same handle every task in a tree is given:
 
@@ -265,13 +270,65 @@ Both run a block, return what it returns, and re-raise what it raises after mark
 | --------------- | -------------------------------------------------------------------------------------------------------- |
 | `detail = text` | Text after the label while the work runs, redrawn in place when animated; kept, never printed, otherwise |
 | `detail`        | The current text, `""` for none                                                                          |
-| `fail(reason)`  | Ends the work as `✗ label: reason` when the block returns, without raising; the reason is optional       |
+| `fail(reason)`  | Ends the work as `𝘅 label: reason` when the block returns, without raising; the reason is optional       |
 | `failed?`       | Whether `fail` was called                                                                                |
 | `reason`        | What `fail` was given                                                                                    |
 
 Every method may be called from any thread, which is how work that reports from a reader thread (a child process's output, say) updates its line. A block that ignores the line works as before, and so does a lambda that takes no arguments. The detail is never printed without animation because it can change many times a second, and a log of every change is not what a pipe asked for.
 
 A spinner whose block calls `fail` still returns the block's value. That is the difference from raising: the work finished and has a result, and the result is that it did not succeed.
+
+### Several at once: `multi_spinner` and `multi_progress`
+
+```ruby
+ui.multi_spinner("Fetching", concurrent: 2) do |m|
+  m.spinner("fonts") { fetch(:fonts) }
+  m.spinner("images") { |line| fetch(:images) { |n| line.detail = "#{n} of 40" } }
+end
+
+ui.multi_progress("Downloading") do |m|
+  files.each { |f| m.progress(f.name, total: f.size) { |bar| download(f) { |n| bar.advance(n) } } }
+end
+```
+
+- The block declares the jobs; nothing runs until it returns, so every row, including those of jobs waiting under a concurrency limit, is drawn before the first job starts. TTY::Spinner::Multi and TTY::ProgressBar::Multi give a row only to a job that has started and move the cursor relative to the last row drawn, which is why these widgets draw their rows themselves, as task trees do.
+- Jobs run all at once by default. `concurrent:` takes the same values as on `ui.tasks`, with the same meaning.
+- The call returns what each job returned, in declaration order, and `nil` for a job that never ran.
+- The headline turns while any job runs and ends `✓` when every job succeeded, `𝘅` otherwise. Every row, the headline's included, is marked in brackets as task rows are: `[ ]` while waiting, a turning `[⠏]` while running, then `[✓]`, `[𝘅]` or `[—]` with its elapsed time.
+- `multi_spinner` gives each job a `Line`; its detail follows the label while the job runs, and `fail` marks the job `𝘅 label: reason` without raising. `multi_progress` gives each job a `Widgets::Progress::Handle`; its row shows a bar, a percentage, a count and an ETA, and the headline's bar counts every job. Labels are padded so every bar starts and ends in the same columns.
+- When a job raises, jobs already running finish, jobs not yet started are marked skipped, and the first error is re-raised.
+- As with task trees, rows are redrawn in place only when they all fit on the screen; otherwise they print as without animation.
+
+### Configuration
+
+`Dry::CLI::UI.configure` sets how every spinner and bar in the process looks. A `Console` reads `Dry::CLI::UI.config` unless given `config:`.
+
+| Setting          | Takes                                                                        | Default                              | Draws                                |
+| ---------------- | ---------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------ |
+| `spinner_format` | A `TTY::Formats::FORMATS` name, or `{ interval:, frames: }`                  | `:dots`                              | `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏`, 10 a second   |
+| `bar_format`     | A `TTY::ProgressBar::Formats::FORMATS` name, or `{ complete:, incomplete: }` | `{ complete: "◼", incomplete: " " }` | `[◼◼◼   ]`                           |
+| `bar_color`      | A Pastel style, or nil                                                       | `:green`                             | The finished part of every bar       |
+| `bar_background` | A Pastel style, or nil                                                       | `:on_bright_black`                   | The whole of every bar, a gray track |
+
+An unknown name, a malformed definition or a style Pastel does not know raises `ArgumentError` when it is set, not when a spinner first turns. Loading the configuration loads only the two format tables and Pastel, never a TTY widget. Colours follow the stream, as everything else does: without colour a bar is its characters alone, and the brackets show its extent.
+
+Every count in a `multi_progress` is right-aligned to the widest any row can show, the headline's total, so `8/503` and `1/8` end in the same column.
+
+### Status bar
+
+`ui.status_bar(title = nil, hints: [])` keeps two rows at the bottom of the screen while its block runs: a rule, then
+
+```text
+ ⠸ deploy · fonts.zip · 2 running · 2 done · [◼◼◼       ] 37% · 0.4s            ^C cancel
+```
+
+- The glyph turns while anything runs. Then come the title in bold, the label of the work started most recently, the counts of what is running, done and failed, a bar over every progress bar reported so far, finished or not, and the elapsed time. Hints are right-aligned when they fit and left out when they do not; a status too wide for the screen is truncated with `…`.
+- Every `spinner`, `progress`, `multi_spinner` and `multi_progress` job, and every task (not group) in a tree, reports its start and end to the bar through its `Terminal`. Commands supply only the title and the hints.
+- It is drawn at the bottom rather than pinned to the top. Pinning a top row needs a scroll region, terminals such as iTerm2 and tmux drop lines scrolled out of a region from the scrollback, and a crash that skips cleanup leaves the region set. A bottom line needs neither.
+- While it runs, the console's terminals write through a `StatusBar::Output`. Each write clears from the cursor to the end of the screen, writes, draws the rule and status line below, and moves the cursor back to where the write left it, in one write to the stream. The column is followed through the text, carriage returns, `CSI n G/C/D` and cursor save and restore, so a spinner redrawing its own line keeps working. The status line alone is redrawn ten times a second.
+- `Terminal#height` is two rows short while it runs, so live widgets fall back to plain output two rows sooner.
+- `out` writes through it too when `out` is animated, since both streams share the screen. Writes that bypass the console land where the bar is until the next write draws over them.
+- Without an animated `err`, and inside another status bar, it only runs the block.
 
 ### Task trees
 
@@ -293,8 +350,8 @@ end
 ```
 
 - Tasks run in order. A group declared `concurrent: true`, or `ui.tasks(concurrent: true)` at the top level, runs its tasks at the same time on `concurrent-ruby` futures. `concurrent: 3` runs at most three at once, taking tasks in declaration order as each finishes. Anything but `true`, `false` or a positive Integer raises `ArgumentError`.
-- Each task is given a `Line`. Its detail is drawn after the task's name while it runs, on a live tree only. A task that calls `fail` is marked `✗ name: reason`, every group above it ends `✗`, and the rest of the tree runs on: nothing is skipped and nothing is raised.
-- States are pending `○`, running `▸`, done `✓`, failed `✗` and skipped `–`. On an animated terminal a running task shows a turning spinner instead of `▸`, so a concurrent group is a multi-spinner.
+- Each task is given a `Line`. Its detail is drawn after the task's name while it runs, on a live tree only. A task that calls `fail` is marked `𝘅 name: reason`, every group above it ends `𝘅`, and the rest of the tree runs on: nothing is skipped and nothing is raised.
+- Each row is marked with its state in brackets: pending `[ ]` and running `[▸]` in bold yellow, done `[✓]` in green, failed `[𝘅]` in red and skipped `[—]` in yellow. On an animated terminal a running task shows a turning spinner instead, `[⠏]`, drawn from the configured spinner format, so a concurrent group is a multi-spinner.
 - When a task raises, it and its enclosing groups are marked failed, tasks already running beside it finish, tasks not yet started are marked skipped, and the first error is re-raised. Under a concurrency limit, no further task is started once one has raised.
 - The live tree is redrawn in place with cursor movement, which cannot reach above the top of the screen. A tree with as many rows as the screen, or more, is printed line by line instead.
 - Task blocks should not write to the terminal while a live tree is drawn; the next redraw overwrites their output.
@@ -336,6 +393,9 @@ With a fixed width, TTY::Box 0.7 wraps text but sizes the box from the unwrapped
 - [x] `debug`, `info`, `success`, `warn`, `error` and `fatal` draw white single-line boxes titled by level, wrapped, as wide as configured or the terminal less a margin, and never lose text.
 - [x] `spinner`, `progress` and `tasks` return their block's value, re-raise its error, and leave an outcome line with the elapsed time; progress shows percent, count and ETA.
 - [x] Task trees nest, run groups concurrently when asked, at most as many at once as asked, and mark failed and skipped tasks.
+- [x] `multi_spinner` and `multi_progress` run declared jobs at once, at most as many as asked, draw every row including waiting ones, return each job's value, and mark failed and skipped jobs.
+- [x] `Dry::CLI::UI.configure` sets the spinner frames, bar characters and bar colours every widget draws with, and rejects unknown formats and styles when set.
+- [x] `status_bar` keeps an automatically fed status line below everything the command prints, restores the cursor after every write, leaves the scrollback intact, and removes itself when the block ends or raises.
 - [x] Spinner and task blocks get a thread-safe `Line` whose detail is drawn while they run, and which can fail them without raising.
 - [x] `popup` draws a content-sized, centred box that leaves the cursor where it was, and a plain box without animation.
 - [x] Tables render rows and a header without truncation.
@@ -346,6 +406,6 @@ With a fixed width, TTY::Box 0.7 wraps text but sizes the box from the unwrapped
 
 ## Out of scope
 
-- Full-screen applications, alternate screen buffers, and a public cursor-positioning API. TTY::Cursor and TTY::Screen are used internally only; `popup` positions itself, and takes no coordinates.
+- Full-screen applications, alternate screen buffers, scroll regions, and a public cursor-positioning API. TTY::Cursor and TTY::Screen are used internally only; `popup` positions itself, and takes no coordinates.
 - Keyboard input beyond prompts.
 - Renderers other than the TTY toolkit. The widget boundary allows one later.

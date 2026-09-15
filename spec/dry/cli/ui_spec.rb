@@ -19,6 +19,37 @@ RSpec.describe Dry::CLI::UI do
     end
   end
 
+  describe ".configure" do
+    it "yields the process-wide configuration and returns it" do
+      returned = described_class.configure { it.bar_format = :classic }
+      expect(returned).to be(described_class.config)
+      expect(described_class.config.bar_format).to eq(:classic)
+    end
+
+    it "runs a block without arguments against the configuration" do
+      described_class.configure { spinner_format :pong }
+      expect(described_class.config.spinner_format).to eq(:pong)
+    end
+
+    it "is what a console draws with unless it is given another" do
+      described_class.configure { bar_format(complete: "#", incomplete: ".") }
+      err = FakeTTY.new
+      allow(TTY::Screen).to receive(:height).and_return(24)
+      Dry::CLI::UI::Console.new(err: err, env: {}, width: 60).multi_progress("Go") do |m|
+        m.progress("a", total: 2) { |bar| bar.advance && sleep(0.15) }
+      end
+      expect(plain(err.string)).to include("[#")
+    end
+  end
+
+  describe ".reset!" do
+    it "forgets every process-wide setting" do
+      described_class.configure { bar_format :classic }
+      described_class.reset!
+      expect(described_class.config.bar_format).to eq(complete: "◼", incomplete: " ")
+    end
+  end
+
   describe "#ui" do
     context "in a dry-cli command run with its own streams" do
       let(:command) do

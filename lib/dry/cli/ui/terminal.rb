@@ -37,6 +37,42 @@ module Dry
         # @return [IO] the stream this terminal writes to
         attr_reader :io
 
+        # @return [StatusBar, nil] what widgets report their work to, while a status bar runs
+        attr_reader :reporter
+
+        # Sends what this terminal writes, and what its widgets report, to a
+        # {StatusBar}, and keeps rows free for it at the bottom of the screen.
+        # Called again with the original stream to undo it.
+        #
+        # @param io [IO]
+        # @param reporter [StatusBar, nil]
+        # @param reserved [Integer] rows at the bottom widgets must not use
+        # @return [void]
+        def redirect(io, reporter: nil, reserved: 0)
+          @io = io
+          @reporter = reporter
+          @reserved = reserved
+        end
+
+        # Reports that a widget started some work.
+        #
+        # @param key [Object] identifies the work until it finishes
+        # @param label [String]
+        # @param progress [#current, #total, nil]
+        # @return [void]
+        def started(key, label, progress: nil)
+          reporter&.started(key, label, progress: progress)
+        end
+
+        # Reports that a widget's work ended.
+        #
+        # @param key [Object] as given to {#started}
+        # @param succeeded [Boolean]
+        # @return [void]
+        def finished(key, succeeded)
+          reporter&.finished(key, succeeded)
+        end
+
         # Whether the stream is an interactive terminal.
         #
         # @return [Boolean]
@@ -67,9 +103,9 @@ module Dry
           @width || (tty? ? TTY::Screen.width : DEFAULT_WIDTH)
         end
 
-        # @return [Integer] rows available
+        # @return [Integer] rows available, less any a status bar keeps
         def height
-          tty? ? TTY::Screen.height : DEFAULT_HEIGHT
+          (tty? ? TTY::Screen.height : DEFAULT_HEIGHT) - @reserved.to_i
         end
 
         # @return [Pastel::Delegator] a colouriser that is a no-op when colour is off
