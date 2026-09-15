@@ -11,6 +11,17 @@ module Dry
 
       def ui: () -> Console
 
+      class Line
+        def self.call: [T] (^(Line) -> T job, Line line) -> T
+        def initialize: () ?{ (String detail) -> void } -> void
+        def detail: () -> String
+        def detail=: (_ToS? text) -> void
+        def fail: (?_ToS? reason) -> self
+        def failed?: () -> bool
+        def reason: () -> String?
+        def summary: (String label) -> String
+      end
+
       class Console
         def debug: (*_ToS paragraphs, ?width: Integer?) -> nil
         def info: (*_ToS paragraphs, ?width: Integer?) -> nil
@@ -20,9 +31,10 @@ module Dry
         def fatal: (*_ToS paragraphs, ?width: Integer?) -> nil
         def box: (*_ToS paragraphs, ?title: String?, ?level: Symbol?, ?width: Integer?) -> nil
         def status: (*_ToS words, ?level: Symbol) -> nil
-        def spinner: [T] (String label) { () -> T } -> T
+        def popup: (*_ToS paragraphs, ?title: String?, ?width: Integer?) -> nil
+        def spinner: [T] (String label) { (Line line) -> T } -> T
         def progress: [T] (String label, total: Integer) { (untyped progress) -> T } -> T
-        def tasks: (?String? title, ?concurrent: bool) { (untyped tasks) -> void } -> nil
+        def tasks: (?String? title, ?concurrent: (bool | Integer)) { (untyped tasks) -> void } -> nil
         def table: (Array[Array[_ToS]] rows, ?header: Array[_ToS]?) -> nil
         def prompt: (String question, ?default: untyped, ?choices: (Array[String] | Hash[String, untyped])?) -> untyped
         def confirm: (String question, ?default: bool) -> bool

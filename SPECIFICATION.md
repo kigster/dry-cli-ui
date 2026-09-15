@@ -93,6 +93,7 @@ ui.progress(...)
 ui.status(...)
 
 ui.box(...)
+ui.popup(...)
 ui.table(...)
 ui.tasks(...)
 
@@ -225,10 +226,10 @@ Only files under `widgets/` and `terminal.rb` touch a TTY class. A future render
 
 Results go to `out`; everything about the command's own progress goes to `err`. Piping a command therefore captures its results and nothing else.
 
-| `out`                             | `err`                                                                      |
-| --------------------------------- | -------------------------------------------------------------------------- |
-| `info`, `success`, `box`, `table` | `debug`, `warn`, `error`, `fatal`, `spinner`, `progress`, `tasks`, prompts |
-| `status` at `info` or `success`   | `status` at `debug`, `warn`, `error` or `fatal`                            |
+| `out`                             | `err`                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------- |
+| `info`, `success`, `box`, `table` | `debug`, `warn`, `error`, `fatal`, `popup`, `spinner`, `progress`, `tasks`, prompts |
+| `status` at `info` or `success`   | `status` at `debug`, `warn`, `error` or `fatal`                                     |
 
 `#ui` uses the command's own `out` and `err` when dry-cli has set them (`Dry::CLI#call(out:, err:)`), and `$stdout` and `$stderr` otherwise. Every write flushes, so the two streams stay in order when both are piped to the same place.
 
@@ -245,17 +246,32 @@ Each stream is judged on its own:
 
 `Console.new(color:, animate:, width:)` overrides detection. Without animation:
 
-| Widget                | Plain output                                                                                       |
-| --------------------- | -------------------------------------------------------------------------------------------------- |
-| spinner               | `Label...` before the block, `✓ Label (1.2s)` or `✗ Label (1.2s)` after it                         |
-| progress              | `Label...` before, `✓ Label 1900/1900 (4.2s)` after, with the count reached                        |
-| tasks                 | each line printed once final: a group when it starts, a task when it ends, skipped ones at the end |
-| prompts               | the question on `err`, one line read from input                                                    |
-| boxes, tables, status | unchanged apart from colour                                                                        |
+| Widget                | Plain output                                                                                                                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| spinner               | `Label...` before the block, `✓ Label (1.2s)` or `✗ Label (1.2s)` after it; a `Line`'s detail is never printed, a `Line#fail` reason follows the label: `✗ Label: reason (1.2s)` |
+| progress              | `Label...` before, `✓ Label 1900/1900 (4.2s)` after, with the count reached                                                                                                      |
+| tasks                 | each line printed once final: a group when it starts, a task when it ends, skipped ones at the end                                                                               |
+| prompts               | the question on `err`, one line read from input                                                                                                                                  |
+| boxes, tables, status | unchanged apart from colour                                                                                                                                                      |
+| popup                 | the same box `ui.box` draws, on `err`, where the output scrolls rather than over it                                                                                              |
 
 ### Spinners and progress bars
 
 Both run a block, return what it returns, and re-raise what it raises after marking the outcome `✗`. The elapsed time comes from a monotonic clock. `ui.progress` yields a handle with `advance(step = 1)`, `current` and `total`; progress is clamped to `0..total`, and `total: 0` is allowed.
+
+`ui.spinner` yields a `Dry::CLI::UI::Line`, the same handle every task in a tree is given:
+
+| Method          | Effect                                                                                                   |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| `detail = text` | Text after the label while the work runs, redrawn in place when animated; kept, never printed, otherwise |
+| `detail`        | The current text, `""` for none                                                                          |
+| `fail(reason)`  | Ends the work as `✗ label: reason` when the block returns, without raising; the reason is optional       |
+| `failed?`       | Whether `fail` was called                                                                                |
+| `reason`        | What `fail` was given                                                                                    |
+
+Every method may be called from any thread, which is how work that reports from a reader thread (a child process's output, say) updates its line. A block that ignores the line works as before, and so does a lambda that takes no arguments. The detail is never printed without animation because it can change many times a second, and a log of every change is not what a pipe asked for.
+
+A spinner whose block calls `fail` still returns the block's value. That is the difference from raising: the work finished and has a result, and the result is that it did not succeed.
 
 ### Task trees
 
@@ -276,11 +292,22 @@ ui.tasks("Deploy") do |t|
 end
 ```
 
-- Tasks run in order. A group declared `concurrent: true`, or `ui.tasks(concurrent: true)` at the top level, runs its tasks at the same time on `concurrent-ruby` futures.
+- Tasks run in order. A group declared `concurrent: true`, or `ui.tasks(concurrent: true)` at the top level, runs its tasks at the same time on `concurrent-ruby` futures. `concurrent: 3` runs at most three at once, taking tasks in declaration order as each finishes. Anything but `true`, `false` or a positive Integer raises `ArgumentError`.
+- Each task is given a `Line`. Its detail is drawn after the task's name while it runs, on a live tree only. A task that calls `fail` is marked `✗ name: reason`, every group above it ends `✗`, and the rest of the tree runs on: nothing is skipped and nothing is raised.
 - States are pending `○`, running `▸`, done `✓`, failed `✗` and skipped `–`. On an animated terminal a running task shows a turning spinner instead of `▸`, so a concurrent group is a multi-spinner.
-- When a task raises, it and its enclosing groups are marked failed, tasks already running beside it finish, tasks not yet started are marked skipped, and the first error is re-raised.
+- When a task raises, it and its enclosing groups are marked failed, tasks already running beside it finish, tasks not yet started are marked skipped, and the first error is re-raised. Under a concurrency limit, no further task is started once one has raised.
 - The live tree is redrawn in place with cursor movement, which cannot reach above the top of the screen. A tree with as many rows as the screen, or more, is printed line by line instead.
 - Task blocks should not write to the terminal while a live tree is drawn; the next redraw overwrites their output.
+
+### Popups
+
+`ui.popup(*paragraphs, title:, width:)` draws a box on `err` over whatever the terminal is showing, such as a key reference over a running spinner. On an animated terminal it is:
+
+- as wide as its widest line or its title needs, never narrower than 20 columns and never wider than the box width (`width:`, then the console's `box_width`, then the terminal less the margin);
+- centred on the screen by absolute cursor positioning;
+- wrapped in a cursor save and restore, with no trailing newline, so it neither moves the cursor nor scrolls the screen.
+
+Whatever redraws that part of the screen next draws over it, which is all the dismissal a popup needs. Without animation the output cannot be drawn over, so it is the box `ui.box` draws, on `err`.
 
 ### Tables
 
@@ -308,7 +335,9 @@ With a fixed width, TTY::Box 0.7 wraps text but sizes the box from the unwrapped
 - [x] `#ui` writes to the streams dry-cli was called with.
 - [x] `debug`, `info`, `success`, `warn`, `error` and `fatal` draw white single-line boxes titled by level, wrapped, as wide as configured or the terminal less a margin, and never lose text.
 - [x] `spinner`, `progress` and `tasks` return their block's value, re-raise its error, and leave an outcome line with the elapsed time; progress shows percent, count and ETA.
-- [x] Task trees nest, run groups concurrently when asked, and mark failed and skipped tasks.
+- [x] Task trees nest, run groups concurrently when asked, at most as many at once as asked, and mark failed and skipped tasks.
+- [x] Spinner and task blocks get a thread-safe `Line` whose detail is drawn while they run, and which can fail them without raising.
+- [x] `popup` draws a content-sized, centred box that leaves the cursor where it was, and a plain box without animation.
 - [x] Tables render rows and a header without truncation.
 - [x] Prompts work interactively and from piped input, and never block on an exhausted input.
 - [x] Output that is not a TTY, or runs under `TERM=dumb`, contains no escape sequences; `NO_COLOR` removes colour.
@@ -317,6 +346,6 @@ With a fixed width, TTY::Box 0.7 wraps text but sizes the box from the unwrapped
 
 ## Out of scope
 
-- Full-screen applications, alternate screen buffers, and a public cursor-positioning API. TTY::Cursor and TTY::Screen are used internally only.
+- Full-screen applications, alternate screen buffers, and a public cursor-positioning API. TTY::Cursor and TTY::Screen are used internally only; `popup` positions itself, and takes no coordinates.
 - Keyboard input beyond prompts.
 - Renderers other than the TTY toolkit. The widget boundary allows one later.
