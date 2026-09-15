@@ -86,6 +86,14 @@ ui.info "Short and narrow", width: 40
 ui.box "Name: Alan Turing", "Role: Cryptanalyst", title: "Profile"   # untitled without title:
 ```
 
+### Popups
+
+```ruby
+ui.popup "h  help", "q  quit", title: "Keys"
+```
+
+On a terminal, a box drawn over whatever is on the screen: only as wide as its text, centred, and leaving the cursor where it was, so a spinner or a redrawn screen carries on underneath. Piped, it is the same box `ui.box` draws, on `err`.
+
 ### Status lines
 
 ```ruby
@@ -100,6 +108,17 @@ rules = ui.spinner("Loading tax rules") { load_rules }
 ```
 
 Returns the block's value. Leaves `✓ Loading tax rules (0.3s)` behind, or `✗` and the re-raised error when the block fails.
+
+The block is given a `Dry::CLI::UI::Line`, for work that has more to say while it runs, or that can fail without raising:
+
+```ruby
+ui.spinner("Importing rules") do |line|
+  rules.each { |rule| line.detail = rule.name; import(rule) }
+  line.fail("#{skipped.size} rules skipped") if skipped.any?
+end
+```
+
+`line.detail = "..."` shows text after the label, redrawn in place as it changes. Piped, the detail is kept and never printed, since it can change many times a second. `line.fail(reason)` ends the spinner as `✗ Importing rules: 3 rules skipped (4.1s)` without raising, and the block's value is still returned. `line.failed?` and `line.reason` read it back. Every `Line` method is safe to call from any thread.
 
 ### Progress bars
 
@@ -147,7 +166,21 @@ Deploy
 └─ ✓ Restart (0.3s)
 ```
 
-While it runs, the tree redraws in place and every running task has its own spinner. Piped, each line is printed once it is final, and a group's line appears as `▸` when it starts. `concurrent: true` runs a group's tasks at the same time, on a group or on `ui.tasks` itself. When a task fails, it is marked `✗`, tasks already running finish, the rest are marked skipped (`–`), and the error is re-raised.
+While it runs, the tree redraws in place and every running task has its own spinner. Piped, each line is printed once it is final, and a group's line appears as `▸` when it starts. `concurrent: true` runs a group's tasks at the same time, on a group or on `ui.tasks` itself, and `concurrent: 3` runs at most three at once. When a task raises, it is marked `✗`, tasks already running finish, the rest are marked skipped (`–`), and the error is re-raised.
+
+Each task is given a `Line`, as a spinner's block is. Its detail is drawn after the task's name while it runs, and `line.fail(reason)` marks the task `✗ name: reason` and its groups `✗`, while the rest of the tree runs on:
+
+```ruby
+ui.tasks("Fetching", concurrent: 4) do |t|
+  assets.each do |asset|
+    t.task(asset.name) do |line|
+      fetch(asset) { |percent| line.detail = "#{percent}%" }
+    rescue Timeout::Error
+      line.fail("timed out")
+    end
+  end
+end
+```
 
 ### Tables
 
@@ -185,9 +218,9 @@ When the input runs out, a prompt returns its default, or raises `Dry::CLI::UI::
 
 ## Where output goes
 
-| To `out` (results)                                          | To `err` (everything else)                                                      |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `info`, `success`, `box`, `table`, `status` at those levels | `debug`, `warn`, `error`, `fatal`, spinners, progress bars, task trees, prompts |
+| To `out` (results)                                          | To `err` (everything else)                                                               |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `info`, `success`, `box`, `table`, `status` at those levels | `debug`, `warn`, `error`, `fatal`, `popup`, spinners, progress bars, task trees, prompts |
 
 `mycli export > rules.csv` therefore writes only the command's results to the file, while its progress stays on the screen. `ui` writes to the streams dry-cli was called with, so `Dry::CLI.new(registry).call(out: io, err: io)` captures everything.
 

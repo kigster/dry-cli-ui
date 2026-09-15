@@ -11,7 +11,7 @@ module Dry
     # Presentation helpers for Dry::CLI commands.
     module UI
       # The gem version.
-      VERSION = "0.1.0"
+      VERSION = "0.2.0"
     end
   end
 end

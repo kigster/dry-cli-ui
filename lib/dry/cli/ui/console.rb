@@ -93,6 +93,23 @@ module Dry
           nil
         end
 
+        # A box drawn over whatever is on the screen, on `err`. On an animated
+        # terminal it is as wide as its text needs, up to the box width, and
+        # centred, and the cursor is left where it was. Otherwise it is the
+        # same box {#box} draws.
+        #
+        # @example
+        #   ui.popup("h  help", "q  quit", title: "Keys")
+        #
+        # @param paragraphs [Array<#to_s>] each one wrapped on its own, separated by a blank line
+        # @param title [String, nil]
+        # @param width [Integer, nil] the widest it may be, overriding the console's box width
+        # @return [nil]
+        def popup(*paragraphs, title: nil, width: nil)
+          err.print(Widgets::Box.new(err, width: width || box_width).popup(paragraphs, title: title))
+          nil
+        end
+
         # One line with a coloured glyph, going to the level's stream.
         #
         # @example
@@ -109,10 +126,17 @@ module Dry
         end
 
         # Runs a block under a spinner and leaves `✓ label (1.2s)` behind, or
-        # `✗ label` when the block raises.
+        # `✗ label` when the block raises. The block is given a {Line}: its
+        # detail is drawn after the label while the spinner turns, and
+        # {Line#fail} leaves `✗ label: reason` without raising.
+        #
+        # @example
+        #   ui.spinner("Importing") do |line|
+        #     rules.each { |rule| line.detail = rule.name }
+        #   end
         #
         # @param label [String]
-        # @yield the work
+        # @yieldparam line [Line] reports on the work while it runs
         # @return [Object] whatever the block returns
         # @raise [ArgumentError] without a block
         def spinner(label, &)
@@ -143,11 +167,17 @@ module Dry
         #     t.task("images") { fetch(:images) }
         #   end
         #
+        # @example At most two at a time, each saying what it is doing
+        #   ui.tasks("Fetching", concurrent: 2) do |t|
+        #     assets.each { |asset| t.task(asset.name) { |line| fetch(asset) { |pct| line.detail = "#{pct}%" } } }
+        #   end
+        #
         # @param title [String, nil]
-        # @param concurrent [Boolean] run the top-level tasks at the same time
+        # @param concurrent [Boolean, Integer] run the top-level tasks at the
+        #   same time: all of them, or at most this many
         # @yieldparam tasks [Widgets::Tasks::Builder] declares `task`s and `group`s
         # @return [nil]
-        # @raise [ArgumentError] without a block
+        # @raise [ArgumentError] without a block, or with an invalid concurrent
         def tasks(title = nil, concurrent: false, &)
           raise ArgumentError, "tasks needs a block" unless block_given?
 

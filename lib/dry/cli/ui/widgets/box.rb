@@ -12,7 +12,7 @@ module Dry
         #
         # The box is as wide as it is told to be: a fixed number of columns,
         # or the whole terminal less {MARGIN}. It never grows wider than the
-        # terminal.
+        # terminal. A {#popup} is only as wide as its text, up to that width.
         class Box
           # Columns left free on the right when the box fills the terminal.
           MARGIN = 2
@@ -49,6 +49,33 @@ module Dry
             )
           end
 
+          # Renders a box over whatever is on the screen: as wide as its text
+          # and title need, no wider than {#render}'s box, and centred. The
+          # cursor is saved before and restored after, so drawing it neither
+          # moves the cursor nor scrolls. Without animation it is the same box
+          # {#render} draws.
+          #
+          # @param paragraphs [Array<#to_s>]
+          # @param title [String, nil]
+          # @return [String]
+          def popup(paragraphs, title: nil)
+            return render(paragraphs, title: title) unless terminal.animated?
+
+            text = wrap(paragraphs)
+            width = popup_width(text, title)
+            height = text.lines.size + 2 + (PADDING[0] * 2)
+            frame = TTY::Box.frame(
+              text,
+              top: [(terminal.height - height) / 2, 0].max,
+              left: [(terminal.width - width) / 2, 0].max,
+              width: width, height: height, padding: PADDING, border: :light,
+              title: title ? { top_left: heading(title, nil) } : {},
+              style: { border: { fg: :white } },
+              enable_color: terminal.color?
+            )
+            "#{terminal.cursor.save}#{frame}#{terminal.cursor.restore}"
+          end
+
           private
 
           # @return [Terminal]
@@ -66,6 +93,18 @@ module Dry
           def wrap(paragraphs)
             text_width = box_width - 2 - (PADDING[1] * 2)
             paragraphs.map { |p| Strings::Wrap.wrap(p.to_s, text_width).gsub(/[ \t]+$/, "") }.join("\n\n")
+          end
+
+          # Columns a popup needs: its widest line or its title, whichever is
+          # wider, with the border and padding around it.
+          #
+          # @param text [String] already wrapped
+          # @param title [String, nil]
+          # @return [Integer]
+          def popup_width(text, title)
+            content = text.lines.map { |line| Unicode::DisplayWidth.of(Strings::ANSI.sanitize(line.chomp)) }
+            content << (Unicode::DisplayWidth.of(title) + 3) if title
+            (content.max.to_i + 2 + (PADDING[1] * 2)).clamp(MIN_WIDTH, box_width)
           end
 
           # @return [Integer]
