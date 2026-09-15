@@ -167,11 +167,17 @@ module Dry
         #     t.task("images") { fetch(:images) }
         #   end
         #
+        # @example At most two at a time, each saying what it is doing
+        #   ui.tasks("Fetching", concurrent: 2) do |t|
+        #     assets.each { |asset| t.task(asset.name) { |line| fetch(asset) { |pct| line.detail = "#{pct}%" } } }
+        #   end
+        #
         # @param title [String, nil]
-        # @param concurrent [Boolean] run the top-level tasks at the same time
+        # @param concurrent [Boolean, Integer] run the top-level tasks at the
+        #   same time: all of them, or at most this many
         # @yieldparam tasks [Widgets::Tasks::Builder] declares `task`s and `group`s
         # @return [nil]
-        # @raise [ArgumentError] without a block
+        # @raise [ArgumentError] without a block, or with an invalid concurrent
         def tasks(title = nil, concurrent: false, &)
           raise ArgumentError, "tasks needs a block" unless block_given?
 

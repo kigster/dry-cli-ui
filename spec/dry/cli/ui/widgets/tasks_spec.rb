@@ -71,6 +71,98 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
       end
     end
 
+    it "gives each task a line" do
+      lines = []
+      tasks.run { |t| t.task("Build") { |line| lines << line } }
+      expect(lines).to contain_exactly(an_instance_of(Dry::CLI::UI::Line))
+    end
+
+    it "runs a lambda task that takes no line" do
+      tasks.run { |t| t.task("Build", &-> { ran << :build }) }
+      expect(ran).to eq([:build])
+    end
+
+    it "keeps a task's detail to itself" do
+      tasks.run { |t| t.task("Build") { |line| line.detail = "assets" } }
+      expect(io.string).to eq("└─ ✓ Build (0.5s)\n")
+    end
+
+    context "when a task reports a failure" do
+      before do
+        tasks.run("Deploy") do |t|
+          t.group("Migrate") do |g|
+            g.task("users") { |line| line.fail("Missing dependency: taxable_income") }
+            g.task("orders") { ran << :orders }
+          end
+          t.task("Restart") { ran << :restart }
+        end
+      end
+
+      it { expect(ran).to eq(%i[orders restart]) }
+
+      it "marks it failed with its reason and runs the rest" do
+        expect(io.string).to eq(<<~TREE)
+          Deploy
+          ├─ ▸ Migrate
+          │  ├─ ✗ users: Missing dependency: taxable_income (0.5s)
+          │  └─ ✓ orders (0.5s)
+          └─ ✓ Restart (0.5s)
+        TREE
+      end
+    end
+
+    describe "a concurrency limit" do
+      let(:running) { Concurrent::AtomicFixnum.new }
+      let(:peak) { Concurrent::AtomicFixnum.new }
+      let(:work) do
+        lambda do |name|
+          now = running.increment
+          peak.update { |seen| [seen, now].max }
+          sleep(0.05)
+          running.decrement
+          ran << name
+        end
+      end
+
+      it "runs at most that many tasks at once" do
+        tasks.run(concurrent: 2) do |t|
+          %i[a b c d e].each { |name| t.task(name.to_s) { work.(name) } }
+        end
+        expect(ran).to contain_exactly(:a, :b, :c, :d, :e)
+        expect(peak.value).to eq(2)
+      end
+
+      it "limits a group's tasks too" do
+        tasks.run do |t|
+          t.group("Fetch", concurrent: 3) { |g| %i[a b c d].each { |name| g.task(name.to_s) { work.(name) } } }
+        end
+        expect(peak.value).to eq(3)
+      end
+
+      it "starts nothing more once a task raises, and skips what never started" do
+        expect do
+          tasks.run(concurrent: 1) do |t|
+            t.task("a") { raise "offline" }
+            t.task("b") { ran << :b }
+          end
+        end.to raise_error(RuntimeError, "offline")
+        expect(ran).to be_empty
+        expect(io.string).to eq("├─ ✗ a (0.5s)\n└─ – b\n")
+      end
+
+      [0, -1, 1.5, "2", nil].each do |limit|
+        it "refuses #{limit.inspect} for the tree" do
+          expect { tasks.run(concurrent: limit) { |t| t.task("a") { nil } } }
+            .to raise_error(ArgumentError, /concurrent must be true, false or a positive Integer/)
+        end
+
+        it "refuses #{limit.inspect} for a group" do
+          expect { tasks.run { |t| t.group("g", concurrent: limit) { |g| g.task("a") { nil } } } }
+            .to raise_error(ArgumentError, /concurrent must be true, false or a positive Integer/)
+        end
+      end
+    end
+
     it "draws nothing when the declaration itself fails" do
       expect { tasks.run { |t| t.task("Build") } }.to raise_error(ArgumentError, /needs a block/)
       expect(io.string).to be_empty
@@ -165,6 +257,30 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
           │  └─ ✓ orders (0.5s)
           └─ ✓ Restart (0.5s)
         TREE
+      end
+    end
+
+    context "when a task says what it is doing" do
+      let(:height) { 24 }
+
+      before do
+        tasks.run do |t|
+          t.group("Migrate") do |g|
+            g.task("users") do |line|
+              line.detail = "table 3 of 7"
+              sleep(1.5 * described_class::INTERVAL)
+              line.fail("locked")
+            end
+          end
+        end
+      end
+
+      it "draws the detail after the running task" do
+        expect(plain(io.string)).to include("   └─ ⠙ users table 3 of 7\n")
+      end
+
+      it "ends with the task and its group failed, and the reason instead of the detail" do
+        expect(plain(io.string)).to end_with("└─ ✗ Migrate (1.5s)\n   └─ ✗ users: locked (0.5s)\n")
       end
     end
 
