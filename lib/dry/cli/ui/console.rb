@@ -93,6 +93,23 @@ module Dry
           nil
         end
 
+        # A box drawn over whatever is on the screen, on `err`. On an animated
+        # terminal it is as wide as its text needs, up to the box width, and
+        # centred, and the cursor is left where it was. Otherwise it is the
+        # same box {#box} draws.
+        #
+        # @example
+        #   ui.popup("h  help", "q  quit", title: "Keys")
+        #
+        # @param paragraphs [Array<#to_s>] each one wrapped on its own, separated by a blank line
+        # @param title [String, nil]
+        # @param width [Integer, nil] the widest it may be, overriding the console's box width
+        # @return [nil]
+        def popup(*paragraphs, title: nil, width: nil)
+          err.print(Widgets::Box.new(err, width: width || box_width).popup(paragraphs, title: title))
+          nil
+        end
+
         # One line with a coloured glyph, going to the level's stream.
         #
         # @example

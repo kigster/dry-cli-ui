@@ -65,6 +65,19 @@ RSpec.describe Dry::CLI::UI::Console do
     end
   end
 
+  describe "#popup" do
+    it "draws a box on err" do
+      expect(ui.popup("h  help", title: "Keys")).to be_nil
+      expect(err.string).to start_with("┌─ Keys ")
+      expect(out.string).to be_empty
+    end
+
+    it "accepts a width" do
+      ui.popup("x", width: 25)
+      expect(err.string.lines.first.chomp.length).to eq(25)
+    end
+  end
+
   describe "#status" do
     it "prints one line" do
       expect(ui.status("Connected", "to", "db")).to be_nil
