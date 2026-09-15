@@ -33,6 +33,7 @@ module Dry
 
       autoload :Console, File.expand_path("ui/console", __dir__)
       autoload :Duration, File.expand_path("ui/duration", __dir__)
+      autoload :Line, File.expand_path("ui/line", __dir__)
       autoload :Terminal, File.expand_path("ui/terminal", __dir__)
       autoload :Theme, File.expand_path("ui/theme", __dir__)
       autoload :Widgets, File.expand_path("ui/widgets", __dir__)

@@ -126,10 +126,17 @@ module Dry
         end
 
         # Runs a block under a spinner and leaves `✓ label (1.2s)` behind, or
-        # `✗ label` when the block raises.
+        # `✗ label` when the block raises. The block is given a {Line}: its
+        # detail is drawn after the label while the spinner turns, and
+        # {Line#fail} leaves `✗ label: reason` without raising.
+        #
+        # @example
+        #   ui.spinner("Importing") do |line|
+        #     rules.each { |rule| line.detail = rule.name }
+        #   end
         #
         # @param label [String]
-        # @yield the work
+        # @yieldparam line [Line] reports on the work while it runs
         # @return [Object] whatever the block returns
         # @raise [ArgumentError] without a block
         def spinner(label, &)
