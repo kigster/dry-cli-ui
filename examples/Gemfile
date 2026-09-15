@@ -1,0 +1,14 @@
+# frozen_string_literal: true
+
+source "https://rubygems.org"
+
+group :development, :test do
+  gem 'dry-cli'
+  gem 'dry-cli-autocomplete'
+  gem 'dry-cli-help'
+  gem 'prime'
+  # multi_spinner, multi_progress and status_bar live on the
+  # kig/add-multi-spinner-progress branch until it is merged; switch this
+  # back to path: "../" then.
+  gem 'dry-cli-ui', path: File.expand_path("~/.agents.worktrees/dry-cli-ui-add-multi-spinner-progress")
+end

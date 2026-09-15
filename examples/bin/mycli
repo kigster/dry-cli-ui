@@ -1,0 +1,206 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Load the gems examples/Gemfile names, even when run as bin/mycli without
+# bundle exec; otherwise Ruby picks the newest installed dry-cli-ui instead.
+ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../Gemfile", __dir__)
+require "bundler/setup"
+
+require "fileutils"
+require "dry/cli"
+require "dry/cli/help"
+require "dry/cli/autocomplete/command"
+require "dry/cli/ui"
+require "net/http"
+require "prime"
+
+module Foo
+  module CLI
+    module Commands
+      extend Dry::CLI::Registry
+
+      class Version < Dry::CLI::Command
+        desc "Print version"
+
+        def call(*)
+          puts "1.0.0"
+        end
+      end
+
+      # Shared by the two URL commands: follows redirects, and asks for the
+      # body as it is stored, so the bytes counted match Content-Length.
+      module HTTP
+        HEADERS = { "Accept-Encoding" => "identity" }.freeze
+        REDIRECTS = 5
+
+        module_function
+
+        # @return [Array(URI, Integer, nil)] where the URL ends up, and its size when the server says
+        # @raise [RuntimeError] for a response that is neither a redirect nor a success
+        def resolve(url, hops = REDIRECTS)
+          uri = URI(url)
+          response = start(uri) { |http| http.head(uri.request_uri, HEADERS) }
+          if response.is_a?(Net::HTTPRedirection) && hops.positive?
+            return resolve(URI.join(uri, response["location"]).to_s, hops - 1)
+          end
+          raise "HTTP #{response.code}" unless response.is_a?(Net::HTTPSuccess)
+
+          [uri, response.content_length]
+        end
+
+        # @yieldparam bytes [Integer] the size of each chunk as it arrives
+        # @return [String] the body
+        # @raise [RuntimeError] for a response that is not a success
+        def download(uri)
+          body = +""
+          start(uri) do |http|
+            http.request_get(uri.request_uri, HEADERS) do |response|
+              raise "HTTP #{response.code}" unless response.is_a?(Net::HTTPSuccess)
+
+              response.read_body do |chunk|
+                body << chunk
+                yield chunk.bytesize if block_given?
+              end
+            end
+          end
+          body
+        end
+
+        def start(uri, &)
+          Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https", open_timeout: 5, read_timeout: 10, &)
+        end
+      end
+
+      # One progress bar per URL, filling as bytes arrive, under a headline
+      # bar that counts every byte.
+      class FetchUrlsProgress < Dry::CLI::Command
+        include Dry::CLI::UI
+
+        desc "Fetch URLs with a progress bar each, and write them all to urls.txt"
+        argument :urls, type: :array, required: true, desc: "URLs to fetch, separated by spaces"
+
+        def call(urls:, **)
+          # A bar's total is fixed when it is declared, so ask each URL for its
+          # size first, with a HEAD request. A URL that fails here is left out.
+          found = urls.filter_map do |url|
+            [url, *HTTP.resolve(url)]
+          rescue StandardError => e
+            ui.status "#{url}: #{e.message}", level: :warn
+            nil
+          end
+          return ui.error("None of the #{urls.size} URLs could be fetched") if found.empty?
+
+          bodies = ui.multi_progress("Fetching #{found.size} URLs", concurrent: 8) do |m|
+            found.each do |url, uri, size|
+              m.progress(url, total: size || 1) do |bar|
+                sleep rand(1..4)
+                # Move the bar one byte at a time, as each chunk arrives.
+                body = HTTP.download(uri) { |bytes| bytes.times { bar.advance } if size }
+                bar.advance unless size # no Content-Length: done in one step
+                body
+              end
+            end
+          end
+
+          File.write("urls.txt", bodies.join("\n"))
+          ui.success "Wrote #{bodies.sum(&:bytesize)} bytes from #{found.size} of #{urls.size} URLs to urls.txt"
+        rescue StandardError => e
+          ui.error("Fetching failed", e.message)
+        end
+      end
+
+      # One spinner per URL, each saying what it is doing, and one file per URL.
+      class FetchUrls < Dry::CLI::Command
+        include Dry::CLI::UI
+
+        desc "Fetch URLs with a spinner each, and write each to its own file"
+        argument :urls, type: :array, required: true, desc: "URLs to fetch, separated by spaces"
+
+        def call(urls:, **)
+          bodies = ui.multi_spinner("Fetching #{urls.size} URLs", concurrent: 8) do |m|
+            urls.each do |url|
+              m.spinner(url) do |line|
+                line.detail = "resolving"
+                uri, = HTTP.resolve(url)
+                line.detail = "downloading #{uri.host}"
+                sleep rand(1..4) # slow enough to watch
+                HTTP.download(uri)
+              rescue StandardError => e
+                line.fail(e.message)
+                nil
+              end
+            end
+          end
+
+          files = urls.zip(bodies).filter_map do |url, body|
+            next unless body
+
+            "#{friendly_filename(url)}.txt".tap { |file| File.write(file, body) }
+          end
+          ui.success "Wrote #{files.size} of #{urls.size} URLs", files.join("\n")
+        end
+
+        private
+
+        def friendly_filename(url)
+          url.sub(%r{\Ahttps?://}, "").gsub(/[^\w.-]+/, "_").delete_suffix("_")
+        end
+      end
+
+      class ComputePrimes < Dry::CLI::Command
+        include Dry::CLI::UI
+
+        def self.closest_prime(n)
+          # Primes must be greater than 1
+          return 2 if n <= 2
+          return n if ::Prime.prime?(n)
+
+          distance = 1
+          loop do
+            lower = n - distance
+            upper = n + distance
+
+            primes = []
+            primes << lower if lower > 1 && ::Prime.prime?(lower)
+            primes << upper if ::Prime.prime?(upper)
+
+            # Return the prime(s) found at the shortest distance
+            return primes.size == 1 ? primes.first : primes if primes.any?
+
+            distance += 1
+          end
+        end
+
+        desc 'Compute closest prime to a given number in the array'
+        option :max, default: 100_000, desc: "Maximum integer to compute closest primes for", type: :integer
+
+        def call(max:)
+          ui.info "Computing closest primes..."
+          File.open('primes.txt', 'w') do |f|
+            integers = (1..max.to_i)
+            ui.progress("Computing Primes", total: integers.size) do |bar|
+              integers.each do |i|
+                p = ComputePrimes.closest_prime(i)
+                f.puts "closest prime to #{i} is #{p}"
+                bar.advance
+              end
+            end
+          end
+          ui.success("Computed #{max} primes, they are in the 'primes.txt' files.")
+        rescue StandardError => e
+          ui.error("Import failed", e.message)
+        end
+      end
+
+      register "version",         Version, aliases: ["v", "-v", "--version"]
+      register "urls_progress",   FetchUrlsProgress
+      register "urls_spinner",    FetchUrls
+      register "completion",      ::Dry::CLI::Autocomplete::Command[::Foo::CLI::Commands], hidden: true
+      register "primes",          ComputePrimes
+    end
+  end
+end
+
+Dry::CLI.new(Foo::CLI::Commands).call
+
+FileUtils.rm_f(Dir.glob("#{File.expand_path('../', __dir__)}/*.txt"))
