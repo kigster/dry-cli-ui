@@ -37,23 +37,12 @@ module Dry
         #     end
         #   end
         class Tasks
-          # Frames a running task cycles through on an animated terminal.
-          FRAMES = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏].freeze
-
-          # Seconds between spinner frames.
-          INTERVAL = 0.1
-
-          # Checks a `concurrent:` setting.
+          # Checks a `concurrent:` setting. See {Pool.concurrency}.
           #
-          # @param value [Boolean, Integer] true for all at once, false for one
-          #   at a time, or the most that may run at once
+          # @param value [Boolean, Integer]
           # @return [Boolean, Integer] the value
           # @raise [ArgumentError] for anything else
-          def self.concurrency(value)
-            return value if [true, false].include?(value) || (value.is_a?(Integer) && value.positive?)
-
-            raise ArgumentError, "concurrent must be true, false or a positive Integer, got #{value.inspect}"
-          end
+          def self.concurrency(value) = Pool.concurrency(value)
 
           # One task, or a group of them.
           class Node
@@ -152,9 +141,11 @@ module Dry
 
           # @param terminal [Terminal]
           # @param clock [#call] returns monotonic seconds
-          def initialize(terminal, clock:)
+          # @param config [Configuration] where the spinner frames come from
+          def initialize(terminal, clock:, config: UI.config)
             @terminal = terminal
             @clock = clock
+            @config = config
             @roots = []
             @live = nil
             @lock = Mutex.new
@@ -192,6 +183,9 @@ module Dry
           # @return [#call]
           attr_reader :clock
 
+          # @return [Configuration]
+          attr_reader :config
+
           # @return [Array<Node>]
           attr_reader :roots
 
@@ -205,57 +199,20 @@ module Dry
           # @param concurrent [Boolean, Integer]
           # @return [void]
           def run_all(nodes, concurrent)
-            return nodes.each { |node| execute(node) } unless concurrent
-
-            futures = concurrent == true ? all_at_once(nodes) : at_most(concurrent, nodes)
-            futures.each(&:wait)
-            failed = futures.find(&:rejected?)
-            raise failed.reason if failed
-          end
-
-          # @param nodes [Array<Node>]
-          # @return [Array<Concurrent::Promises::Future>] one per node
-          def all_at_once(nodes)
-            nodes.map { |node| Concurrent::Promises.future(node) { |each| execute(each) } }
-          end
-
-          # Workers that take nodes off a queue until it is empty, or until
-          # one of them raises. A node no worker took stays pending, and is
-          # marked skipped once the tree ends.
-          #
-          # @param limit [Integer]
-          # @param nodes [Array<Node>]
-          # @return [Array<Concurrent::Promises::Future>] one per worker
-          def at_most(limit, nodes)
-            queue = Queue.new
-            nodes.each { |node| queue << node }
-            queue.close
-            stop = Concurrent::AtomicBoolean.new
-            Array.new([limit, nodes.size].min) { Concurrent::Promises.future { work(queue, stop) } }
-          end
-
-          # @param queue [Queue] closed, so `pop` returns nil once it is empty
-          # @param stop [Concurrent::AtomicBoolean] set once any worker raises
-          # @return [void]
-          def work(queue, stop)
-            ok = false
-            while (node = queue.pop) && stop.false?
-              execute(node)
-            end
-            ok = true
-          ensure
-            stop.make_true unless ok
+            Pool.run(nodes, concurrent) { |node| execute(node) }
           end
 
           # @param node [Node]
           # @return [void]
           def execute(node)
             started = clock.call
+            terminal.started(node, node.name) unless node.group?
             change(node, :running)
             ok = false
             node.group? ? run_all(node.children, node.concurrent) : Line.call(node.job, node.line)
             ok = !node.failed?
           ensure
+            terminal.finished(node, ok) unless node.group?
             change(node, ok ? :done : :failed, seconds: clock.call - started)
           end
 
@@ -308,7 +265,7 @@ module Dry
             return unless live?
 
             rows.each_key { |node| terminal.puts(line(node)) }
-            Concurrent::TimerTask.new(execution_interval: INTERVAL) { tick }.tap(&:execute)
+            Concurrent::TimerTask.new(execution_interval: config.spinner_frame_seconds) { tick }.tap(&:execute)
           end
 
           # @return [void]
@@ -321,18 +278,17 @@ module Dry
 
           # @return [void]
           def redraw
-            terminal.print(terminal.cursor.up(rows.size))
-            rows.each_key { |node| terminal.print("#{terminal.cursor.clear_line}#{line(node)}\n") }
+            terminal.print(terminal.cursor.up(rows.size) + rows.each_key.map { |node| "#{terminal.cursor.clear_line}#{line(node)}\n" }.join)
           end
 
           # @param node [Node]
           # @return [String]
           def line(node)
             pastel = terminal.pastel
-            glyph, color = Theme::STATES.fetch(node.state)
-            glyph = FRAMES[frame % FRAMES.size] if node.state == :running && live?
+            frames = config.spinner_frames
+            glyph = frames[frame % frames.size] if node.state == :running && live?
             elapsed = " #{pastel.bright_black("(#{Duration.format(node.seconds)})")}" if node.seconds
-            "#{pastel.bright_black(rows.fetch(node))}#{pastel.decorate(glyph, color)} #{text(node)}#{elapsed}"
+            "#{pastel.bright_black(rows.fetch(node))}#{Theme.marker(pastel, node.state, glyph)} #{text(node)}#{elapsed}"
           end
 
           # What follows the glyph: the name, then the detail while the task

@@ -28,17 +28,17 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
       tasks.run("Deploy", &deploy)
       expect(io.string).to eq(<<~TREE)
         Deploy
-        ├─ ✓ Build (0.5s)
-        ├─ ▸ Migrate
-        │  ├─ ✓ users (0.5s)
-        │  └─ ✓ orders (0.5s)
-        └─ ✓ Restart (0.5s)
+        ├─ [✓] Build (0.5s)
+        ├─ [▸] Migrate
+        │  ├─ [✓] users (0.5s)
+        │  └─ [✓] orders (0.5s)
+        └─ [✓] Restart (0.5s)
       TREE
     end
 
     it "prints no heading without a title" do
       tasks.run { |t| t.task("Build") { nil } }
-      expect(io.string).to eq("└─ ✓ Build (0.5s)\n")
+      expect(io.string).to eq("└─ [✓] Build (0.5s)\n")
     end
 
     context "when a task fails" do
@@ -62,11 +62,11 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
       it "marks it failed and everything after it skipped" do
         expect(io.string).to eq(<<~TREE)
           Deploy
-          ├─ ✓ Build (0.5s)
-          ├─ ▸ Migrate
-          │  ├─ ✗ users (0.5s)
-          │  └─ – orders
-          └─ – Restart
+          ├─ [✓] Build (0.5s)
+          ├─ [▸] Migrate
+          │  ├─ [𝘅] users (0.5s)
+          │  └─ [—] orders
+          └─ [—] Restart
         TREE
       end
     end
@@ -84,7 +84,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
 
     it "keeps a task's detail to itself" do
       tasks.run { |t| t.task("Build") { |line| line.detail = "assets" } }
-      expect(io.string).to eq("└─ ✓ Build (0.5s)\n")
+      expect(io.string).to eq("└─ [✓] Build (0.5s)\n")
     end
 
     context "when a task reports a failure" do
@@ -103,10 +103,10 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
       it "marks it failed with its reason and runs the rest" do
         expect(io.string).to eq(<<~TREE)
           Deploy
-          ├─ ▸ Migrate
-          │  ├─ ✗ users: Missing dependency: taxable_income (0.5s)
-          │  └─ ✓ orders (0.5s)
-          └─ ✓ Restart (0.5s)
+          ├─ [▸] Migrate
+          │  ├─ [𝘅] users: Missing dependency: taxable_income (0.5s)
+          │  └─ [✓] orders (0.5s)
+          └─ [✓] Restart (0.5s)
         TREE
       end
     end
@@ -147,7 +147,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
           end
         end.to raise_error(RuntimeError, "offline")
         expect(ran).to be_empty
-        expect(io.string).to eq("├─ ✗ a (0.5s)\n└─ – b\n")
+        expect(io.string).to eq("├─ [𝘅] a (0.5s)\n└─ [—] b\n")
       end
 
       [0, -1, 1.5, "2", nil].each do |limit|
@@ -174,7 +174,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
 
     it "completes an empty group" do
       tasks.run { |t| t.group("Nothing") { |_| nil } }
-      expect(io.string).to eq("└─ ▸ Nothing\n")
+      expect(io.string).to eq("└─ [▸] Nothing\n")
     end
 
     context "with a concurrent group" do
@@ -200,7 +200,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
         end
         expect(ran).to contain_exactly(:fonts, :images, :publish)
         expect(ran.last).to eq(:publish)
-        expect(io.string).to include("├─ ▸ Fetch\n", "│  ├─ ✓ fonts (", "│  └─ ✓ images (", "└─ ✓ Publish (")
+        expect(io.string).to include("├─ [▸] Fetch\n", "│  ├─ [✓] fonts (", "│  └─ [✓] images (", "└─ [✓] Publish (")
       end
 
       it "runs top-level tasks at the same time" do
@@ -225,7 +225,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
           end
         end.to raise_error(RuntimeError, "offline")
         expect(ran).to eq([:images])
-        expect(io.string).to include("│  ├─ ✗ fonts (", "│  └─ ✓ images (", "└─ – Publish\n")
+        expect(io.string).to include("│  ├─ [𝘅] fonts (", "│  └─ [✓] images (", "└─ [—] Publish\n")
       end
     end
   end
@@ -241,21 +241,21 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
       before { tasks.run("Deploy", &deploy) }
 
       it "draws the tree pending, then redraws it in place" do
-        expect(plain(io.string)).to start_with("Deploy\n├─ ○ Build\n├─ ○ Migrate\n│  ├─ ○ users\n")
+        expect(plain(io.string)).to start_with("Deploy\n├─ [ ] Build\n├─ [ ] Migrate\n│  ├─ [ ] users\n")
         expect(io.string).to include("\e[5A")
       end
 
       it "shows a spinner beside the running task" do
-        expect(plain(io.string)).to include("├─ ⠋ Build\n")
+        expect(plain(io.string)).to include("├─ [⠋] Build\n")
       end
 
       it "ends with every task done" do
         expect(plain(io.string)).to end_with(<<~TREE)
-          ├─ ✓ Build (0.5s)
-          ├─ ✓ Migrate (2.5s)
-          │  ├─ ✓ users (0.5s)
-          │  └─ ✓ orders (0.5s)
-          └─ ✓ Restart (0.5s)
+          ├─ [✓] Build (0.5s)
+          ├─ [✓] Migrate (2.5s)
+          │  ├─ [✓] users (0.5s)
+          │  └─ [✓] orders (0.5s)
+          └─ [✓] Restart (0.5s)
         TREE
       end
     end
@@ -268,7 +268,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
           t.group("Migrate") do |g|
             g.task("users") do |line|
               line.detail = "table 3 of 7"
-              sleep(1.5 * described_class::INTERVAL)
+              sleep(1.5 * Dry::CLI::UI.config.spinner_frame_seconds)
               line.fail("locked")
             end
           end
@@ -276,21 +276,21 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
       end
 
       it "draws the detail after the running task" do
-        expect(plain(io.string)).to include("   └─ ⠙ users table 3 of 7\n")
+        expect(plain(io.string)).to include("   └─ [⠙] users table 3 of 7\n")
       end
 
       it "ends with the task and its group failed, and the reason instead of the detail" do
-        expect(plain(io.string)).to end_with("└─ ✗ Migrate (1.5s)\n   └─ ✗ users: locked (0.5s)\n")
+        expect(plain(io.string)).to end_with("└─ [𝘅] Migrate (1.5s)\n   └─ [𝘅] users: locked (0.5s)\n")
       end
     end
 
     context "while a task takes a while" do
       let(:height) { 24 }
 
-      before { tasks.run { |t| t.task("Compile") { sleep(3.5 * described_class::INTERVAL) } } }
+      before { tasks.run { |t| t.task("Compile") { sleep(3.5 * Dry::CLI::UI.config.spinner_frame_seconds) } } }
 
       it "turns the spinner" do
-        expect(plain(io.string)).to include("└─ ⠙ Compile\n")
+        expect(plain(io.string)).to include("└─ [⠙] Compile\n")
       end
     end
 
@@ -301,7 +301,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Tasks do
 
       it "prints lines as they become final, without moving the cursor" do
         expect(io.string).not_to include("\e[5A")
-        expect(plain(io.string)).to include("├─ ▸ Migrate\n")
+        expect(plain(io.string)).to include("├─ [▸] Migrate\n")
       end
     end
   end

@@ -30,14 +30,29 @@ module Dry
           fatal: Level.new(name: :fatal, title: "Fatal", glyph: "✖", color: :magenta, stream: :err)
         }.freeze
 
-        # Glyphs for the states an operation passes through.
+        # Glyphs and colours for the states an operation passes through: bold
+        # yellow until it ends, then a green check, a red cross, or a yellow
+        # dash for work that was skipped.
         STATES = {
-          pending: ["○", :bright_black],
-          running: ["▸", :cyan],
-          done: ["✓", :green],
-          failed: ["✗", :red],
-          skipped: ["–", :bright_black]
+          pending: [" ", %i[bold yellow]],
+          running: ["▸", %i[bold yellow]],
+          done: ["✓", %i[green]],
+          failed: ["𝘅", %i[red]],
+          skipped: ["—", %i[yellow]]
         }.freeze
+
+        # A state's glyph between brackets, the glyph in the state's colour:
+        # `[✓]`, `[✗]`, or `[ ]` while pending. Task trees and the multi
+        # widgets mark every row with one.
+        #
+        # @param pastel [Pastel::Delegator]
+        # @param state [Symbol] one of the keys of {STATES}
+        # @param glyph [String, nil] drawn instead of the state's own, such as a spinner frame
+        # @return [String]
+        def self.marker(pastel, state, glyph = nil)
+          default, color = STATES.fetch(state)
+          "[#{pastel.decorate(glyph || default, *color)}]"
+        end
 
         # Looks up a level by name.
         #

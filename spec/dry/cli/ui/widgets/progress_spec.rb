@@ -24,7 +24,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Progress do
           raise "boom"
         end
       end.to raise_error("boom")
-      expect(io.string).to end_with("✗ Importing 1/3 (0.5s)\n")
+      expect(io.string).to end_with("𝘅 Importing 1/3 (0.5s)\n")
     end
 
     it "rejects a total that is not a count" do
@@ -39,18 +39,38 @@ RSpec.describe Dry::CLI::UI::Widgets::Progress do
 
     it "draws a bar with percent, count and ETA, then clears it" do
       progress.run("Importing", total: 4) { |bar| 4.times { bar.advance } }
-      expect(io.string).to include("Importing █", "100%", "4/4", "ETA")
+      expect(io.string).to include("Importing [", "◼", "100%", "4/4", "ETA")
       expect(plain(io.string)).to end_with("✓ Importing 4/4 (0.5s)\n")
     end
 
     it "stops a bar that did not finish" do
       expect { progress.run("Importing", total: 4) { |bar| bar.advance && raise("boom") } }.to raise_error("boom")
-      expect(plain(io.string)).to end_with("✗ Importing 1/4 (0.5s)\n")
+      expect(plain(io.string)).to end_with("𝘅 Importing 1/4 (0.5s)\n")
     end
 
     it "draws no bar for an empty job" do
       progress.run("Importing", total: 0) { nil }
       expect(plain(io.string)).to eq("Importing...\n✓ Importing 0/0 (0.5s)\n")
+    end
+  end
+
+  describe ".bar" do
+    let(:config) { Dry::CLI::UI::Configuration.new }
+    let(:pastel) { Pastel.new(enabled: true) }
+
+    it "paints the finished part green, and all of it on gray" do
+      expect(described_class.bar(pastel, config, 0.5, 4))
+        .to eq("[\e[32;100m◼\e[0m\e[32;100m◼\e[0m\e[100m \e[0m\e[100m \e[0m]")
+    end
+
+    it "draws the characters alone when colour is off" do
+      expect(described_class.bar(Pastel.new(enabled: false), config, 0.25, 4)).to eq("[◼   ]")
+    end
+
+    it "leaves out what is not set" do
+      config.bar_color = nil
+      config.bar_background = nil
+      expect(described_class.bar(pastel, config, 1.0, 2)).to eq("[◼◼]")
     end
   end
 

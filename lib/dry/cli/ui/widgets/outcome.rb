@@ -16,7 +16,7 @@ module Dry
           def self.line(terminal, state, label, seconds)
             glyph, color = Theme::STATES.fetch(state)
             pastel = terminal.pastel
-            "#{pastel.decorate(glyph, color)} #{label} #{pastel.bright_black("(#{Duration.format(seconds)})")}"
+            "#{pastel.decorate(glyph, *color)} #{label} #{pastel.bright_black("(#{Duration.format(seconds)})")}"
           end
         end
       end

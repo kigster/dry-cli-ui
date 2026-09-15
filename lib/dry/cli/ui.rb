@@ -31,12 +31,44 @@ module Dry
       # input stream is exhausted.
       class NonInteractiveError < Error; end
 
+      autoload :Configuration, File.expand_path("ui/configuration", __dir__)
       autoload :Console, File.expand_path("ui/console", __dir__)
       autoload :Duration, File.expand_path("ui/duration", __dir__)
       autoload :Line, File.expand_path("ui/line", __dir__)
+      autoload :StatusBar, File.expand_path("ui/status_bar", __dir__)
       autoload :Terminal, File.expand_path("ui/terminal", __dir__)
       autoload :Theme, File.expand_path("ui/theme", __dir__)
       autoload :Widgets, File.expand_path("ui/widgets", __dir__)
+
+      class << self
+        # Make process-wide settings. A block taking an argument receives the
+        # configuration; any other block runs against it.
+        #
+        # @example
+        #   Dry::CLI::UI.configure do
+        #     spinner_format :dots
+        #     bar_format :box
+        #     bar_color :cyan
+        #   end
+        #
+        # @return [Configuration]
+        def configure(&block)
+          block.arity == 1 ? yield(config) : config.instance_eval(&block)
+          config
+        end
+
+        # @return [Configuration] the process-wide settings
+        def config
+          @config ||= Configuration.new
+        end
+
+        # Forget every process-wide setting.
+        #
+        # @return [void]
+        def reset!
+          @config = nil
+        end
+      end
 
       # The console this command presents through. Writes to the command's own
       # `out` and `err` when dry-cli has set them, and to `$stdout` and

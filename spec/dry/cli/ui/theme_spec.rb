@@ -15,6 +15,17 @@ RSpec.describe Dry::CLI::UI::Theme do
     end
   end
 
+  describe ".marker" do
+    let(:pastel) { Pastel.new(enabled: true) }
+
+    it { expect(described_class.marker(pastel, :done)).to eq("[\e[32m✓\e[0m]") }
+    it { expect(described_class.marker(Pastel.new(enabled: false), :pending)).to eq("[ ]") }
+    it { expect(described_class.marker(Pastel.new(enabled: false), :running, "⠏")).to eq("[⠏]") }
+    it { expect(described_class.marker(pastel, :running, "⠏")).to eq("[\e[1;33m⠏\e[0m]") }
+    it { expect(described_class.marker(pastel, :failed)).to eq("[\e[31m𝘅\e[0m]") }
+    it { expect(described_class.marker(pastel, :skipped)).to eq("[\e[33m—\e[0m]") }
+  end
+
   describe "LEVELS" do
     subject(:streams) { described_class::LEVELS.transform_values(&:stream) }
 
