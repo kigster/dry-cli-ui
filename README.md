@@ -5,7 +5,7 @@
 Runtime terminal UI for [dry-cli](https://github.com/dry-rb/dry-cli) commands: spinners, progress bars, boxes, status lines, task trees, tables and prompts.
 
 > [!NOTE]
-> The design, and the reasons behind it, are in [SPECIFICATION](SPECIFICATION.md).
+> The design, and the reasons behind it, are in [SPECIFICATION](docs/SPECIFICATION.md).
 
 A long-running command has more to say than `puts` can show well: what it is doing now, how far along it is, what went wrong. Include one module and the command gets a `ui` that says it, in colour and in place on a terminal, and as plain lines when the output is piped to a file or a CI log.
 
@@ -15,7 +15,14 @@ A long-running command has more to say than `puts` can show well: what it is doi
 gem "dry-cli-ui"
 ```
 
-Requires Ruby 4.0 or later.
+Requires Ruby 4.0 or later and `dry-cli` 1.0 or later. The rendering comes from the [TTY toolkit](https://ttytoolkit.org) (`tty-box`, `tty-spinner`, `tty-progressbar`, `tty-table`, `tty-prompt`, `tty-cursor`, `tty-screen`), `pastel`, `strings` and `concurrent-ruby`, which Bundler installs with the gem.
+
+Either require works, and both load the same file:
+
+```ruby
+require "dry-cli-ui"   # matches the gem name
+require "dry/cli/ui"   # matches the constant Dry::CLI::UI
+```
 
 ## Usage
 
@@ -52,19 +59,45 @@ Loading tax rules...
 ✓ Loading tax rules (0.3s)
 Importing rules...
 𝘅 Importing rules 1482/1900 (4.1s)
-┌─ Error ──────────────────────────────────────────────────┐
-│                                                          │
-│  Import failed                                           │
-│                                                          │
-│  Could not validate rule US.2026.IRC.199A: missing       │
-│  dependency taxable_income                               │
-│                                                          │
-└──────────────────────────────────────────────────────────┘
+┌─ Error ────────────────────────────────────────────────────────────────────┐
+│                                                                            │
+│  Import failed                                                             │
+│                                                                            │
+│  Could not validate rule US.2026.IRC.199A: missing dependency              │
+│  taxable_income                                                            │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
+
+A stream that is not a terminal is taken to be 80 columns wide, so a piped box is 78.
 
 On a terminal the spinner turns and the bar fills in place, with percent, count and ETA, and each is replaced by the same `✓` or `𝘅` line when its block ends.
 
 Include the module once in a base class and every command has `ui`. Including it loads nothing: the TTY gems load the first time `ui` is used.
+
+```ruby
+class ApplicationCommand < Dry::CLI::Command
+  include Dry::CLI::UI
+end
+
+class Import < ApplicationCommand
+  def call(**) = ui.success("Nothing to import")
+end
+```
+
+`ui` writes to the command's `out` and `err` when dry-cli has set them, and to `$stdout` and `$stderr` otherwise.
+
+### Without dry-cli
+
+`Dry::CLI::UI::Console` needs nothing from dry-cli, so a Rake task or a plain script can use it directly:
+
+```ruby
+require "dry-cli-ui"
+
+ui = Dry::CLI::UI::Console.new
+ui.spinner("Compacting the database") { compact! }
+ui.success "Done"
+```
 
 ## API
 
@@ -79,12 +112,55 @@ ui.error   "Import failed", e.message
 ui.fatal   "Database unreachable"
 ```
 
-Each draws a box with a single white border and the level's name as a coloured title. Every argument is a paragraph, wrapped to fit. The box fills the terminal less a two-column margin, or takes a fixed width:
+Each draws a box with a single white border and the level's name as a coloured title, and returns `nil`. Every argument is a paragraph, wrapped to fit, with a blank line between paragraphs. The box fills the terminal less a two-column margin, or takes a fixed width:
 
 ```ruby
 ui.info "Short and narrow", width: 40
-ui.box "Name: Alan Turing", "Role: Cryptanalyst", title: "Profile"   # untitled without title:
 ```
+
+```text
+┌─ Info ───────────────────────────────┐
+│                                      │
+│  Short and narrow                    │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+A `width:` is never wider than the terminal less its margin, and never narrower than 20 columns.
+
+| Method    | Title   | Colour  | Stream |
+| --------- | ------- | ------- | ------ |
+| `debug`   | Debug   | gray    | `err`  |
+| `info`    | Info    | cyan    | `out`  |
+| `success` | Success | green   | `out`  |
+| `warn`    | Warning | yellow  | `err`  |
+| `error`   | Error   | red     | `err`  |
+| `fatal`   | Fatal   | magenta | `err`  |
+
+`ui.box` is the general form. Without `level:` it is untitled unless given a `title:`, uncoloured, and goes to `out`:
+
+```ruby
+ui.box "Name: Alan Turing", "Role: Cryptanalyst", title: "Profile", width: 40
+```
+
+```text
+┌─ Profile ────────────────────────────┐
+│                                      │
+│  Name: Alan Turing                   │
+│                                      │
+│  Role: Cryptanalyst                  │
+│                                      │
+└──────────────────────────────────────┘
+```
+
+With `level:` it takes that level's colour and stream, and its title unless `title:` replaces it:
+
+```ruby
+ui.box "Disk is 91% full", level: :warn, title: "Disk"   # a yellow "Disk" box on err
+ui.box "Plain and untitled"                              # no title, on out
+```
+
+An unknown level raises `ArgumentError`.
 
 ### Popups
 
@@ -92,14 +168,36 @@ ui.box "Name: Alan Turing", "Role: Cryptanalyst", title: "Profile"   # untitled 
 ui.popup "h  help", "q  quit", title: "Keys"
 ```
 
-On a terminal, a box drawn over whatever is on the screen: only as wide as its text, centred, and leaving the cursor where it was, so a spinner or a redrawn screen carries on underneath. Piped, it is the same box `ui.box` draws, on `err`.
+On a terminal, a box drawn over whatever is on the screen: only as wide as its text (at least 20 columns, at most `width:` or the box width), centred, and leaving the cursor where it was, so a spinner or a redrawn screen carries on underneath. Piped, it is the same box `ui.box` draws, on `err`:
+
+```text
+┌─ Keys ─────────────────────┐
+│                            │
+│  h  help                   │
+│                            │
+│  q  quit                   │
+│                            │
+└────────────────────────────┘
+```
 
 ### Status lines
+
+One line with a coloured glyph, on the level's stream. The level defaults to `:info`, and every argument is joined with a space:
 
 ```ruby
 ui.status "Connected to the database", level: :success   # ✓ Connected to the database
 ui.status "Disk nearly full", level: :warn               # ⚠ Disk nearly full
+ui.status "Loaded", rules.size, "rules"                  # ℹ Loaded 1900 rules
 ```
+
+| Level      | Glyph | Stream |
+| ---------- | ----- | ------ |
+| `:debug`   | `·`   | `err`  |
+| `:info`    | `ℹ`   | `out`  |
+| `:success` | `✓`   | `out`  |
+| `:warn`    | `⚠`   | `err`  |
+| `:error`   | `✗`   | `err`  |
+| `:fatal`   | `✖`   | `err`  |
 
 ### Spinners
 
@@ -118,7 +216,27 @@ ui.spinner("Importing rules") do |line|
 end
 ```
 
-`line.detail = "..."` shows text after the label, redrawn in place as it changes. Piped, the detail is kept and never printed, since it can change many times a second. `line.fail(reason)` ends the spinner as `𝘅 Importing rules: 3 rules skipped (4.1s)` without raising, and the block's value is still returned. `line.failed?` and `line.reason` read it back. Every `Line` method is safe to call from any thread.
+`line.detail = "..."` shows text after the label, redrawn in place as it changes. Piped, the detail is kept and never printed, since it can change many times a second. `line.fail(reason)` ends the spinner as `𝘅 Importing rules: 3 rules skipped (4.1s)` without raising, and the block's value is still returned. `line.failed?`, `line.reason` and `line.detail` read it back. Every `Line` method is safe to call from any thread.
+
+Piped, each of these prints its label with `...` when it starts, then its outcome:
+
+```text
+Loading tax rules...
+✓ Loading tax rules (0.3s)
+Importing rules...
+𝘅 Importing rules: 3 rules skipped (4.1s)
+```
+
+A block that raises leaves `𝘅 Loading tax rules (0.3s)` and the error propagates, so `rescue` it around the call. A lambda that takes no arguments is called without a `Line`, so a method object or a stored lambda can be passed as it is:
+
+```ruby
+load = -> { YAML.load_file("rules.yml") }
+rules = ui.spinner("Loading tax rules", &load)
+```
+
+Without a block, `spinner` raises `ArgumentError`. The same is true of `progress`, `multi_spinner`, `multi_progress`, `tasks` and `status_bar`.
+
+Elapsed times read `0.4s` under a minute, `1m 02s` under an hour, and `1h 02m` after that.
 
 ### Progress bars
 
@@ -132,6 +250,25 @@ end
 ```
 
 The bar shows percent, `current/total` and ETA, `Importing rules [◼◼◼◼◼◼    ] 61%  1159/1900  ETA 2.7s`, and ends with `✓ Importing rules 1900/1900 (4.2s)`. On a terminal the `◼`s are green and the whole bar sits on a gray background; see [Configuration](#configuration) to change either.
+
+The block is given a `Dry::CLI::UI::Widgets::Progress::Handle`, never the underlying `TTY::ProgressBar`:
+
+```ruby
+ui.progress("Copying", total: files.sum(&:size)) do |bar|
+  files.each do |file|
+    copy(file) { |bytes| bar.advance(bytes) }
+    ui.status "#{bar.current} of #{bar.total} bytes" if bar.current == bar.total
+  end
+  :copied                                        # progress returns the block's value
+end
+```
+
+- `advance(step = 1)` adds to `current` and returns the handle; `current` never passes `total`.
+- `total:` must be a non-negative Integer, or `progress` raises `ArgumentError`.
+- `total: 0` draws no bar, and ends `✓ Copying 0/0`.
+- The outcome is `✓` whenever the block returns, even short of the total (`✓ Copying 12/20`), and `𝘅` when it raises.
+
+Piped, it prints `Importing rules...` when it starts and the outcome line when it ends, with no bar in between.
 
 ### Several spinners at once
 
@@ -163,7 +300,31 @@ Once they finish, the headline ends `✓`, or `𝘅` when any job failed:
 └─ [✓] video (0.2s)
 ```
 
-Each job is given a `Line`, as a single spinner's block is. When a job raises, jobs already running finish, jobs not yet started are marked skipped (`[—]`), and the error is re-raised. Piped, it prints `Fetching...`, then each job's outcome as it ends, then the headline's.
+Each job is given a `Line`, as a single spinner's block is. When a job raises, jobs already running finish, jobs not yet started are marked skipped (`[—]`), and the first error is re-raised. A job that never ran has `nil` in the returned array, which matters only when you rescue the error.
+
+`concurrent:` takes `true` (all at once, the default), `false` (one at a time, in order), or a positive Integer. Anything else, `0` included, raises `ArgumentError` before any job runs.
+
+Piped, it prints `Fetching...`, then each job's outcome as it ends, then the headline's:
+
+```text
+Fetching...
+  [✓] fonts (0.3s)
+  [𝘅] images: 2 timed out (0.3s)
+  [✓] video (0.2s)
+𝘅 Fetching (0.5s)
+```
+
+When a job raises under `concurrent: 1`:
+
+```text
+Fetching...
+  [𝘅] fonts (0.1s)
+  [—] images
+  [—] video
+𝘅 Fetching (0.1s)
+```
+
+The rows are also printed one by one on a terminal that has fewer rows than the widget needs, since the cursor cannot move above the top of the screen.
 
 ### Several progress bars at once
 
@@ -186,7 +347,17 @@ The same shape as `multi_spinner`, with a bar per job and a headline bar that co
 └─ [ ] video.mp4
 ```
 
-Each job is given the same handle as `ui.progress`, with `advance(step = 1)`, `current` and `total`. A finished job's row reads `[✓] fonts.zip 40/40 (0.1s)`, and the headline's `[✓] Downloading 240/240 (0.3s)`.
+Each job is given the same handle as `ui.progress`, with `advance(step = 1)`, `current` and `total`. A finished job's row reads `[✓] fonts.zip 40/40 (0.1s)`, and the headline's `[✓] Downloading 240/240 (0.3s)`. It returns what each job returned, in declaration order, and takes `concurrent:` as `multi_spinner` does. Every `m.progress` needs a block and a non-negative Integer `total:`, or raises `ArgumentError`.
+
+Piped:
+
+```text
+Downloading...
+  [✓] fonts.zip 40/40 (0.1s)
+  [✓] images.tar.gz 120/120 (0.2s)
+  [✓] video.mp4 80/80 (0.3s)
+✓ Downloading 240/240 (0.3s)
+```
 
 ### Example: fetching many URLs
 
@@ -285,7 +456,37 @@ Deploy
 └─ [✓] Restart (0.3s)
 ```
 
-While it runs, the tree redraws in place and every running task has its own spinner. Every row is marked in brackets, in bold yellow while it waits, `[ ]`, and while it runs, a turning `[⠏]`; then a green `[✓]` when it is done, a red `[𝘅]` when it failed, or a yellow `[—]` when it was skipped. Piped, each line is printed once it is final, and a group's line appears as `[▸]` when it starts. `concurrent: true` runs a group's tasks at the same time, on a group or on `ui.tasks` itself, and `concurrent: 3` runs at most three at once. When a task raises, it is marked `[𝘅]`, tasks already running finish, the rest are marked skipped (`[—]`), and the error is re-raised.
+While it runs, the tree redraws in place and every running task has its own spinner. Every row is marked in brackets, in bold yellow while it waits, `[ ]`, and while it runs, a turning `[⠏]`; then a green `[✓]` when it is done, a red `[𝘅]` when it failed, or a yellow `[—]` when it was skipped. Piped, each line is printed once it is final, and a group's line appears as `[▸]` when it starts. `concurrent: true` runs a group's tasks at the same time, on a group or on `ui.tasks` itself, and `concurrent: 3` runs at most three at once. Without it, tasks run one after another. When a task raises, it is marked `[𝘅]`, tasks already running finish, the rest are marked skipped (`[—]`), and the error is re-raised. `ui.tasks` returns `nil`, and its title is optional: `ui.tasks { |t| ... }` draws the tree without a heading.
+
+Piped, the same tree as the example above, with one migration failing:
+
+```text
+Deploy
+├─ [✓] Build assets (0.4s)
+├─ [▸] Migrate
+│  ├─ [✓] users (0.1s)
+│  └─ [𝘅] orders: table locked (0.2s)
+├─ [▸] Warm caches
+│  ├─ [✓] fonts (0.5s)
+│  └─ [✓] images (0.3s)
+└─ [✓] Restart (0.3s)
+```
+
+And when `Build assets` raises instead:
+
+```text
+Deploy
+├─ [𝘅] Build assets (0.4s)
+├─ [—] Migrate
+│  ├─ [—] users
+│  └─ [—] orders
+├─ [—] Warm caches
+│  ├─ [—] fonts
+│  └─ [—] images
+└─ [—] Restart
+```
+
+`task` and `group` each need a block, and `concurrent:` takes the same values as on the multi widgets; either mistake raises `ArgumentError` while the tree is being declared, before anything runs.
 
 Each task is given a `Line`, as a spinner's block is. Its detail is drawn after the task's name while it runs, and `line.fail(reason)` marks the task `𝘅 name: reason` and its groups `𝘅`, while the rest of the tree runs on:
 
@@ -325,7 +526,15 @@ While the block runs, the bottom of the screen shows how the whole command is do
 
 Nothing reports to it by hand: every `spinner`, `progress`, `multi_spinner`, `multi_progress` and task started inside the block does so on its own. Hints that do not fit are left out, and a status that does not fit is cut short with `…`.
 
-It sets no scroll region, so the scrollback keeps everything, and an interrupted command leaves nothing behind. Piped, or without animation, it just runs the block. Write through `ui` while it runs: a bare `puts` lands where the bar is, until the next `ui` call draws the bar again.
+It sets no scroll region, so the scrollback keeps everything, and an interrupted command leaves nothing behind. Piped, or without animation, it just runs the block, and a `status_bar` inside another one does the same. Either way it returns the block's value. Write through `ui` while it runs: a bare `puts` lands where the bar is, until the next `ui` call draws the bar again.
+
+Both arguments are optional, and `hints:` takes one string or several:
+
+```ruby
+report = ui.status_bar { build_report }                       # no title, no hints
+ui.status_bar("sync", hints: "q quit") { sync }
+ui.status_bar("sync", hints: ["^C cancel", "? help"]) { sync }
+```
 
 ### Putting it together
 
@@ -376,7 +585,11 @@ ui.table([["Alan Turing", 41], ["Ada Lovelace", 36]], header: %w[Name Age])
 └──────────────┴─────┘
 ```
 
-Tables are never truncated or rotated to fit the screen.
+Tables go to `out` and return `nil`. Cells are converted with `to_s`, the header is bold on a colour terminal, `header:` is optional, and an empty `rows` prints nothing. Tables are never truncated or rotated to fit the screen: a table wider than the terminal wraps like any long line.
+
+```ruby
+ui.table(User.limit(10).pluck(:email, :created_at))   # no header
+```
 
 ### Prompts
 
@@ -387,13 +600,52 @@ tier = ui.prompt("Tier?", choices: { "Free" => :free, "Pro" => :pro })
 ui.confirm("Deploy to #{env}?", default: false)
 ```
 
-On a terminal these use arrow-key menus and line editing. Otherwise they read lines from standard input, so answers can be piped:
+- `prompt` returns the answer as a String, or the default for an empty answer.
+- With an Array of `choices:`, it returns the chosen name; with a Hash, the value the chosen name maps to (`:pro` above). `default:` is the name of a choice.
+- `confirm` returns `true` or `false`, and `default:` is `false` unless given.
+
+When both standard input and `err` are terminals, these use arrow-key menus and line editing (TTY::Prompt). Otherwise they print the question to `err` and read lines from standard input, so answers can be piped:
 
 ```bash
 printf 'production\ny\n' | mycli deploy
 ```
 
-When the input runs out, a prompt returns its default, or raises `Dry::CLI::UI::NonInteractiveError` if it has none.
+In that mode a list of choices is numbered, and an answer may be the number or the name:
+
+```text
+Name? [Alan Turing]
+Environment?
+  1) staging
+  2) production
+Choose 1-2 [staging]: 2
+Tier?
+  1) Free
+  2) Pro
+Choose 1-2: Pro
+Deploy to production? (y/N) maybe
+Please answer y or n.
+Deploy to production? (y/N) yes
+```
+
+An answer that matches no choice asks again, and `confirm` accepts `y`, `yes`, `n` and `no` in any case. When the input runs out, a prompt returns its default, or raises `Dry::CLI::UI::NonInteractiveError` if it has none:
+
+```ruby
+token = begin
+  ui.prompt("API token?")
+rescue Dry::CLI::UI::NonInteractiveError
+  ENV.fetch("API_TOKEN")
+end
+```
+
+## Errors
+
+| Error                               | Raised when                                                                                                                  |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `Dry::CLI::UI::NonInteractiveError` | a prompt has no answer left to read and no default                                                                           |
+| `Dry::CLI::UI::Error`               | never directly: the base class of the gem's own errors, for `rescue Dry::CLI::UI::Error`                                     |
+| `ArgumentError`                     | a widget has no block, `total:` is not a non-negative Integer, `concurrent:` is invalid, a level or configuration is unknown |
+
+Errors raised inside a block are never swallowed: the widget marks itself failed and re-raises them.
 
 ## Where output goes
 
@@ -427,7 +679,34 @@ Dry::CLI::UI.configure do |config|
 end
 ```
 
-An unknown name or a malformed definition raises `ArgumentError` when it is set.
+An unknown name or a malformed definition raises `ArgumentError` when it is set, as does a colour Pastel does not know:
+
+```ruby
+Dry::CLI::UI.configure { bar_color :nope }
+# => ArgumentError: bar_color must be a Pastel style or nil, got :nope
+```
+
+Called without a value, each setting reads it back, and `Dry::CLI::UI.config` returns the configuration itself. `Dry::CLI::UI.reset!` restores every default, which is useful between specs:
+
+```ruby
+Dry::CLI::UI.config.bar_color        # => :green
+Dry::CLI::UI.config.spinner_frames   # => ["⠋", "⠙", "⠹", ...]
+
+RSpec.configure { |c| c.after { Dry::CLI::UI.reset! } }
+```
+
+Some more looks, all from names the TTY gems already know:
+
+```ruby
+Dry::CLI::UI.configure do
+  spinner_format :classic          # | / - \
+  bar_format :block                # █ and ░
+  bar_color :cyan
+  bar_background nil               # no track colour
+end
+```
+
+### Console options
 
 Override `ui` to configure the console:
 
@@ -447,6 +726,47 @@ class ApplicationCommand < Dry::CLI::Command
 end
 ```
 
+Every option `Console.new` takes:
+
+| Option       | Default               | What it does                                                         |
+| ------------ | --------------------- | -------------------------------------------------------------------- |
+| `out:`       | `$stdout`             | where results go                                                     |
+| `err:`       | `$stderr`             | where diagnostics, progress and prompts go                           |
+| `input:`     | `$stdin`              | where prompt answers are read from                                   |
+| `env:`       | `ENV`                 | read for `NO_COLOR` and `TERM`                                       |
+| `color:`     | `nil`                 | `true` or `false` forces colour on both streams; `nil` detects it    |
+| `animate:`   | `nil`                 | `true` or `false` forces animation on both streams; `nil` detects it |
+| `width:`     | `nil`                 | forces the terminal width in columns; `nil` asks the terminal, or 80 |
+| `box_width:` | `nil`                 | the width of every box; `nil` fills the terminal less two columns    |
+| `clock:`     | monotonic clock       | any object whose `call` returns seconds, for elapsed times           |
+| `config:`    | `Dry::CLI::UI.config` | a `Dry::CLI::UI::Configuration` for this console alone               |
+
+`config:` gives one console a look of its own without changing the process-wide one:
+
+```ruby
+classic = Dry::CLI::UI::Configuration.new.tap { |c| c.spinner_format = :classic }
+ui = Dry::CLI::UI::Console.new(config: classic)
+```
+
+### Testing a command
+
+Pass `StringIO`s and assert on what was written. A `StringIO` is not a terminal, so the output is the plain form shown throughout this README, with no escape codes:
+
+```ruby
+out = StringIO.new
+err = StringIO.new
+ui  = Dry::CLI::UI::Console.new(out: out, err: err, input: StringIO.new("y\n"))
+
+ui.spinner("Loading") { :ok }
+ui.success "Imported"
+ui.confirm("Continue?")        # => true
+
+err.string   # => "Loading...\n✓ Loading (0.0s)\nContinue? (y/N) "
+out.string   # => the Success box
+```
+
+Through dry-cli, `Dry::CLI.new(registry).call(arguments: %w[import], out: out, err: err)` gives every command's `ui` those streams.
+
 ## Relationship to dry-cli-help
 
 `dry-cli-help` is static presentation: what does this command do? `dry-cli-ui` is runtime presentation: what is this command doing? Use either, or both.
@@ -457,6 +777,19 @@ gem "dry-cli-help"
 gem "dry-cli-ui"
 ```
 
+## Examples
+
+[`examples/`](examples/README.md) holds a small dry-cli application that uses the gem:
+
+```bash
+cd examples
+bundle install
+bundle exec bin/mycli primes --max 200000
+bundle exec bin/mycli urls_spinner https://www.ruby-lang.org https://dry-rb.org
+bundle exec bin/mycli urls_progress https://www.ruby-lang.org https://dry-rb.org
+bundle exec bin/mycli urls_progress https://www.ruby-lang.org | cat   # the plain form
+```
+
 ## Development
 
 ```bash
@@ -465,10 +798,11 @@ just test               # the suite, with 100% line and branch coverage enforced
 just lint               # rubocop
 just ci                 # both
 just format             # rubocop -a, then mdformat
+just doc                # YARD documentation
 bin/console             # IRB with the gem loaded
 ```
 
-Specs render into a `StringIO`. The animated code paths run against `FakeTTY`, a `StringIO` that answers `tty?` with true, and elapsed times come from a fake clock.
+Specs render into a `StringIO`. The animated code paths run against `FakeTTY`, a `StringIO` that answers `tty?` with true, and elapsed times come from a fake clock. RBS signatures for the public API are in [`sig/dry/cli/ui.rbs`](sig/dry/cli/ui.rbs).
 
 ## Contributing
 
@@ -476,6 +810,18 @@ Bug reports and pull requests are welcome at <https://github.com/kigster/dry-cli
 
 > [!WARNING]
 > The `dry-` prefix and the `Dry::CLI::UI` namespace do not imply endorsement by `dry-rb`. This is an independent gem that extends theirs.
+
+## Note to Dry-Rb Maintainers
+
+First — hats off to all of you who tirelessly built out one of the most valuable collections of libraries in the Ruby ecosystem.
+
+While I admire and would be willing to contribute any or all of the extension gem's code to the original gem, I feel that creating plugins and extensions allows the author to fully express their needs and wants, and then, if the authors of `dry-cli` become interested in any of them, I would be honored to submit a PR to `dry-cli` itself.
+
+This method offered a very open road to extensibility and experimentation. If the code quality or design is not up to the level required for direct contributions to `dry-rb`, then let it be known that:
+
+1. We would be very happy to receive any feedback and improve, refactor, and update the gem assuming it improves it
+1. Roll any part of the codebase as a PR to the `dry-cli` core.
+1. We hold the authors of `dry-rb` in high regard, and generally would love to collaborate, as long as the feedback loop/cycle is not so long that the context of the changes gets lost in time, as with so many contributions made to other gems in the past.
 
 ## License
 
