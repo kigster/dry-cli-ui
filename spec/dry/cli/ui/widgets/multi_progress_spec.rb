@@ -42,6 +42,11 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiProgress do
       expect(io.string).to be_empty
     end
 
+    it "rejects a colour Pastel does not know" do
+      expect { multi.run("Downloading") { |m| m.progress("a.zip", total: 1, color: :nope) { nil } } }
+        .to raise_error(ArgumentError, /color must be a Pastel style/)
+    end
+
     it "rejects a job without a block" do
       expect { multi.run("Downloading") { |m| m.progress("a.zip", total: 1) } }.to raise_error(ArgumentError, /needs a block/)
     end
@@ -94,6 +99,17 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiProgress do
     it "draws a full bar for a job with nothing to do" do
       multi.run("Downloading") { |m| m.progress("empty", total: 0) { sleep(0.15) } }
       expect(plain(io.string)).to include("100%  0/0")
+    end
+
+    it "paints each bar in its own colour, and the rest in the configured one" do
+      coloured = Dry::CLI::UI::Terminal.new(io, env: {}, width: 80, color: true)
+      described_class.new(coloured, clock: clock).run("Scanning") do |m|
+        m.progress("up", total: 2, color: :green) { |bar| bar.advance && sleep(0.15) }
+        m.progress("down", total: 2, color: :red) { |bar| bar.advance && sleep(0.15) }
+      end
+      rows = io.string.lines
+      expect(rows.grep(/up .*ETA/).last).to include("\e[32m◼")
+      expect(rows.grep(/down .*ETA/).last).to include("\e[31m◼")
     end
 
     it "takes the bar's characters from the configuration" do

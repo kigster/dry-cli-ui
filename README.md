@@ -59,6 +59,7 @@ Loading tax rules...
 ✓ Loading tax rules (0.3s)
 Importing rules...
 𝘅 Importing rules 1482/1900 (4.1s)
+
 ┌─ Error ────────────────────────────────────────────────────────────────────┐
 │                                                                            │
 │  Import failed                                                             │
@@ -112,13 +113,14 @@ ui.error   "Import failed", e.message
 ui.fatal   "Database unreachable"
 ```
 
-Each draws a box with a single white border and the level's name as a coloured title, and returns `nil`. Every argument is a paragraph, wrapped to fit, with a blank line between paragraphs. The box fills the terminal less a two-column margin, or takes a fixed width:
+Each prints a blank line, then a box with a single white border and the level's name as a coloured title, and returns `nil`. Every argument is a paragraph, wrapped to fit, with a blank line between paragraphs. The box fills the terminal less a two-column margin, or takes a fixed width:
 
 ```ruby
 ui.info "Short and narrow", width: 40
 ```
 
 ```text
+
 ┌─ Info ───────────────────────────────┐
 │                                      │
 │  Short and narrow                    │
@@ -144,6 +146,7 @@ ui.box "Name: Alan Turing", "Role: Cryptanalyst", title: "Profile", width: 40
 ```
 
 ```text
+
 ┌─ Profile ────────────────────────────┐
 │                                      │
 │  Name: Alan Turing                   │
@@ -249,7 +252,7 @@ ui.progress("Importing rules", total: rules.size) do |bar|
 end
 ```
 
-The bar shows percent, `current/total` and ETA, `Importing rules [◼◼◼◼◼◼    ] 61%  1159/1900  ETA 2.7s`, and ends with `✓ Importing rules 1900/1900 (4.2s)`. On a terminal the `◼`s are green and the whole bar sits on a gray background; see [Configuration](#configuration) to change either.
+The bar shows percent, `current/total` and ETA, `Importing rules [◼◼◼◼◼◼    ] 61%  1159/1900  ETA 2.7s`, and ends with `✓ Importing rules 1900/1900 (4.2s)`. On a terminal the `◼`s are green, between brackets, on no background; see [Configuration](#configuration) to change either.
 
 The block is given a `Dry::CLI::UI::Widgets::Progress::Handle`, never the underlying `TTY::ProgressBar`:
 
@@ -266,6 +269,7 @@ end
 - `advance(step = 1)` adds to `current` and returns the handle; `current` never passes `total`.
 - `total:` must be a non-negative Integer, or `progress` raises `ArgumentError`.
 - `total: 0` draws no bar, and ends `✓ Copying 0/0`.
+- `color:` paints this bar's finished part in any Pastel style, such as `color: :red`, instead of the configured `bar_color`. A style Pastel does not know raises `ArgumentError` before the block runs.
 - The outcome is `✓` whenever the block returns, even short of the total (`✓ Copying 12/20`), and `𝘅` when it raises.
 
 Piped, it prints `Importing rules...` when it starts and the outcome line when it ends, with no bar in between.
@@ -347,7 +351,16 @@ The same shape as `multi_spinner`, with a bar per job and a headline bar that co
 └─ [ ] video.mp4
 ```
 
-Each job is given the same handle as `ui.progress`, with `advance(step = 1)`, `current` and `total`. A finished job's row reads `[✓] fonts.zip 40/40 (0.1s)`, and the headline's `[✓] Downloading 240/240 (0.3s)`. It returns what each job returned, in declaration order, and takes `concurrent:` as `multi_spinner` does. Every `m.progress` needs a block and a non-negative Integer `total:`, or raises `ArgumentError`.
+Each job is given the same handle as `ui.progress`, with `advance(step = 1)`, `current` and `total`. `m.progress` takes `color:` as `ui.progress` does, so bars side by side can differ:
+
+```ruby
+ui.multi_progress("Probing #{hosts.size} hosts") do |m|
+  m.progress("Answered", total: hosts.size, color: :green) { |bar| ... }
+  m.progress("No answer", total: hosts.size, color: :red) { |bar| ... }
+end
+```
+
+The headline bar keeps the configured colour. A finished job's row reads `[✓] fonts.zip 40/40 (0.1s)`, and the headline's `[✓] Downloading 240/240 (0.3s)`. It returns what each job returned, in declaration order, and takes `concurrent:` as `multi_spinner` does. Every `m.progress` needs a block and a non-negative Integer `total:`, or raises `ArgumentError`.
 
 Piped:
 
@@ -666,11 +679,11 @@ Dry::CLI::UI.configure do
   spinner_format :dots                                 # any TTY::Spinner format name
   bar_format(complete: "◼", incomplete: " ")           # or any TTY::ProgressBar bar format name, such as :box
   bar_color :green                                     # the finished part: any Pastel style, or nil
-  bar_background :on_bright_black                      # the whole bar: any Pastel style, or nil
+  bar_background nil                                   # the whole bar: any Pastel style, or nil
 end
 ```
 
-Those are the defaults: spinners turn through `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` ten times a second, and bars draw a green `◼` for each finished part on a gray track. Without colour the track is blank, and the brackets still show where the bar ends. Every spinner reads the same format, including `multi_spinner`, task trees and the status bar, and every bar reads the same characters and colours. The formats also take a definition of your own:
+Those are the defaults: spinners turn through `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` ten times a second, and bars draw a green `◼` for each finished part, with nothing behind them, and brackets show where the bar begins and ends. Every spinner reads the same format, including `multi_spinner`, task trees and the status bar, and every bar reads the same characters and colours, except a bar given its own `color:`. The formats also take a definition of your own:
 
 ```ruby
 Dry::CLI::UI.configure do |config|
@@ -702,7 +715,7 @@ Dry::CLI::UI.configure do
   spinner_format :classic          # | / - \
   bar_format :block                # █ and ░
   bar_color :cyan
-  bar_background nil               # no track colour
+  bar_background :on_blue          # a blue track the whole bar's width
 end
 ```
 

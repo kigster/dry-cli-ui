@@ -19,7 +19,7 @@ RSpec.describe Dry::CLI::UI::Console do
 
         before { ui.public_send(level, "first", "second") }
 
-        it { expect(written).to start_with("┌─ #{title} ") }
+        it { expect(written).to start_with("\n┌─ #{title} ") }
         it { expect(written).to include("│  first ", "│  second ") }
         it { expect(other).to be_empty }
       end
@@ -31,7 +31,7 @@ RSpec.describe Dry::CLI::UI::Console do
 
     it "accepts a width for one box" do
       ui.info("x", width: 25)
-      expect(out.string.lines.first.chomp.length).to eq(25)
+      expect(out.string.lines[1].chomp.length).to eq(25)
     end
 
     context "with a console box width" do
@@ -39,29 +39,34 @@ RSpec.describe Dry::CLI::UI::Console do
 
       before { ui.info("x") }
 
-      it { expect(out.string.lines.first.chomp.length).to eq(30) }
+      it { expect(out.string.lines[1].chomp.length).to eq(30) }
     end
   end
 
   describe "#box" do
+    it "starts with a blank line" do
+      ui.box("plain panel")
+      expect(out.string.lines.first).to eq("\n")
+    end
+
     it "is untitled by default and goes to out" do
       ui.box("plain panel")
-      expect(out.string.lines.first).to match(/\A┌─+┐$/)
+      expect(out.string.lines[1]).to match(/\A┌─+┐$/)
     end
 
     it "takes a title" do
       ui.box("Name: Alan Turing", title: "Profile")
-      expect(out.string).to start_with("┌─ Profile ")
+      expect(out.string).to start_with("\n┌─ Profile ")
     end
 
     it "takes a level's title and stream" do
       ui.box("careful", level: :warn)
-      expect(err.string).to start_with("┌─ Warning ")
+      expect(err.string).to start_with("\n┌─ Warning ")
     end
 
     it "lets a title override the level's" do
       ui.box("careful", level: :warn, title: "Heads up")
-      expect(err.string).to start_with("┌─ Heads up ")
+      expect(err.string).to start_with("\n┌─ Heads up ")
     end
   end
 
@@ -106,6 +111,7 @@ RSpec.describe Dry::CLI::UI::Console do
     end
 
     it { expect { ui.progress("Importing", total: 1) }.to raise_error(ArgumentError, /needs a block/) }
+    it { expect { ui.progress("Importing", total: 1, color: :nope) { nil } }.to raise_error(ArgumentError, /color/) }
   end
 
   describe "#multi_spinner" do

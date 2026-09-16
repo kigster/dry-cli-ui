@@ -75,7 +75,7 @@ module Dry
           @config = config
         end
 
-        # A framed panel. Given a level, it takes that level's title, colour
+        # A framed panel, preceded by a blank line. Given a level, it takes that level's title, colour
         # and stream; without one it is untitled unless given a title, and goes
         # to `out`.
         #
@@ -91,7 +91,7 @@ module Dry
           theme = level && Theme.level(level)
           terminal = theme ? stream(theme) : out
           widget = Widgets::Box.new(terminal, width: width || box_width)
-          terminal.print(widget.render(paragraphs, title: title || theme&.title, color: theme&.color))
+          terminal.print("\n#{widget.render(paragraphs, title: title || theme&.title, color: theme&.color)}")
           nil
         end
 
@@ -171,13 +171,16 @@ module Dry
         #
         # @param label [String]
         # @param total [Integer] units of work
+        # @param color [Symbol, nil] the finished part's Pastel style; nil for
+        #   the configured `bar_color`
         # @yieldparam progress [Widgets::Progress::Handle] call `advance` as units complete
         # @return [Object] whatever the block returns
-        # @raise [ArgumentError] without a block, or when total is not a non-negative Integer
-        def progress(label, total:, &)
+        # @raise [ArgumentError] without a block, when total is not a
+        #   non-negative Integer, or when color is not a Pastel style
+        def progress(label, total:, color: nil, &)
           raise ArgumentError, "progress needs a block" unless block_given?
 
-          Widgets::Progress.new(err, clock: clock, config: config).run(label, total: total, &)
+          Widgets::Progress.new(err, clock: clock, config: config).run(label, total: total, color: color, &)
         end
 
         # Runs several jobs at once, each with a progress bar of its own,

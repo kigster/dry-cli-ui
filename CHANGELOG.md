@@ -1,8 +1,8 @@
-## [Unreleased]
-
 ## [0.5.0]
 
 - The README documents every public method, option and error, with the plain output each widget prints when piped, and a section on testing a command with `StringIO`.
+- `ui.progress` and `m.progress` inside `ui.multi_progress` take `color:`, a Pastel style for that bar's finished part in place of the configured `bar_color`, so bars side by side can differ. An unknown style raises `ArgumentError`.
+- `bar_background` defaults to `nil`, so bars no longer sit on a gray track; the brackets mark where each bar begins and ends.
 - `SPECIFICATION.md` moves to `docs/SPECIFICATION.md`, marked as the specification for version 0.1.0, and is no longer part of the YARD documentation.
 
 ## [0.4.0]
