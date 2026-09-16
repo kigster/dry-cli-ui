@@ -10,5 +10,5 @@ group :development, :test do
   # multi_spinner, multi_progress and status_bar live on the
   # kig/add-multi-spinner-progress branch until it is merged; switch this
   # back to path: "../" then.
-  gem 'dry-cli-ui', path: File.expand_path("~/.agents.worktrees/dry-cli-ui-add-multi-spinner-progress")
+  gem 'dry-cli-ui', path: '../'
 end

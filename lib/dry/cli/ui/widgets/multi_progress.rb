@@ -14,7 +14,7 @@ module Dry
         # @example
         #   ui.multi_progress("Downloading") do |m|
         #     files.each do |file|
-        #       m.progress(file.name, total: file.size) do |bar|
+        #       m.progress(file.name, total: file.size, color: file.large? ? :yellow : nil) do |bar|
         #         download(file) { |bytes| bar.advance(bytes) }
         #       end
         #     end
@@ -33,14 +33,17 @@ module Dry
             #
             # @param label [String]
             # @param total [Integer] units of work
+            # @param color [Symbol, nil] the finished part's Pastel style; nil for
+            #   {Configuration#bar_color}
             # @yieldparam progress [Progress::Handle] call `advance` as units complete
             # @return [self]
-            # @raise [ArgumentError] without a block, or when total is not a non-negative Integer
-            def progress(label, total:, &work)
+            # @raise [ArgumentError] without a block, when total is not a
+            #   non-negative Integer, or when color is not a Pastel style
+            def progress(label, total:, color: nil, &work)
               raise ArgumentError, "progress #{label.inspect} needs a block" unless work
               raise ArgumentError, "total must be a non-negative Integer, got #{total.inspect}" unless total.is_a?(Integer) && total >= 0
 
-              @jobs << Multi::Job.new(label, work, Progress::Handle.new(total, nil))
+              @jobs << Multi::Job.new(label, work, Progress::Handle.new(total, nil, color: Progress.color(color)))
               self
             end
           end
@@ -55,7 +58,7 @@ module Dry
           # @param width [Integer]
           # @return [String]
           def running(job, width)
-            "#{job.label.ljust(width)} #{meter(job.handle.current, job.handle.total, job.started)}"
+            "#{job.label.ljust(width)} #{meter(job.handle.current, job.handle.total, job.started, job.handle.color)}"
           end
 
           # @param job [Job]
@@ -83,10 +86,11 @@ module Dry
           # @param done [Integer]
           # @param all [Integer]
           # @param since [Float, nil] when the work started, by the clock
+          # @param color [Symbol, nil] the bar's own colour, if any
           # @return [String]
-          def meter(done, all, since)
+          def meter(done, all, since, color = nil)
             ratio = all.zero? ? 1.0 : done.fdiv(all)
-            bar = Progress.bar(terminal.pastel, config, ratio, bar_columns)
+            bar = Progress.bar(terminal.pastel, config, ratio, bar_columns, color: color)
             format("%<bar>s %<percent>3d%%  %<count>s  ETA %<eta>s",
                    bar: bar, percent: (ratio * 100).floor, count: "#{done}/#{all}".rjust(count_width), eta: eta(done, all, since))
           end

@@ -16,14 +16,20 @@ module Dry
           class Handle
             # @param total [Integer]
             # @param bar [TTY::ProgressBar, nil]
-            def initialize(total, bar)
+            # @param color [Symbol, nil] see {Progress.color}
+            def initialize(total, bar, color: nil)
               @total = total
               @bar = bar
+              @color = color
               @current = 0
             end
 
             # @return [Integer] the number of units the operation has
             attr_reader :total
+
+            # @return [Symbol, nil] the Pastel style of the bar's finished part;
+            #   nil for {Configuration#bar_color}
+            attr_reader :color
 
             # @return [Integer] the number of units completed so far
             attr_reader :current
@@ -52,25 +58,38 @@ module Dry
           # Narrowest bar drawn.
           MIN_BAR = 10
 
+          # Checks a bar's own colour.
+          #
+          # @param value [Symbol, nil] any Pastel style, or nil for {Configuration#bar_color}
+          # @return [Symbol, nil] the value
+          # @raise [ArgumentError] for anything else
+          def self.color(value)
+            return value if value.nil? || Configuration::STYLES.include?(value)
+
+            raise ArgumentError, "color must be a Pastel style or nil, got #{value.inspect}"
+          end
+
           # A bar between brackets, painted as the configuration says: the
-          # finished part in {Configuration#bar_color}, and all of it on
-          # {Configuration#bar_background}.
+          # finished part in {Configuration#bar_color}, or in the bar's own
+          # colour when it has one, and all of it on {Configuration#bar_background}.
           #
           # @param pastel [Pastel::Delegator] a no-op when colour is off
           # @param config [Configuration]
           # @param ratio [Float] how much is finished, from 0 to 1
           # @param columns [Integer] the bar's width inside the brackets
+          # @param color [Symbol, nil] the finished part's style; nil for {Configuration#bar_color}
           # @return [String]
-          def self.bar(pastel, config, ratio, columns)
+          def self.bar(pastel, config, ratio, columns, color: nil)
             filled = (ratio * columns).floor
-            "[#{complete(pastel, config) * filled}#{incomplete(pastel, config) * (columns - filled)}]"
+            "[#{complete(pastel, config, color) * filled}#{incomplete(pastel, config) * (columns - filled)}]"
           end
 
           # @param pastel [Pastel::Delegator]
           # @param config [Configuration]
+          # @param color [Symbol, nil] the style; nil for {Configuration#bar_color}
           # @return [String] one finished cell, painted
-          def self.complete(pastel, config)
-            pastel.decorate(config.bar_complete, *[config.bar_color, config.bar_background].compact)
+          def self.complete(pastel, config, color = nil)
+            pastel.decorate(config.bar_complete, *[color || config.bar_color, config.bar_background].compact)
           end
 
           # @param pastel [Pastel::Delegator]
@@ -93,15 +112,19 @@ module Dry
           #
           # @param label [String]
           # @param total [Integer] the number of units of work
+          # @param color [Symbol, nil] the finished part's Pastel style; nil for
+          #   {Configuration#bar_color}
           # @yieldparam progress [Handle]
           # @return [Object] whatever the block returns
-          # @raise [ArgumentError] when total is not a non-negative Integer
-          def run(label, total:)
+          # @raise [ArgumentError] when total is not a non-negative Integer, or
+          #   color is not a Pastel style
+          def run(label, total:, color: nil)
             raise ArgumentError, "total must be a non-negative Integer, got #{total.inspect}" unless total.is_a?(Integer) && total >= 0
 
+            Progress.color(color)
             started = clock.call
-            bar = start(label, total)
-            handle = Handle.new(total, bar)
+            bar = start(label, total, color)
+            handle = Handle.new(total, bar, color: color)
             terminal.started(handle, label, progress: handle)
             ok = false
             result = yield handle
@@ -129,8 +152,9 @@ module Dry
 
           # @param label [String]
           # @param total [Integer]
+          # @param color [Symbol, nil]
           # @return [TTY::ProgressBar, nil]
-          def start(label, total)
+          def start(label, total, color)
             unless terminal.animated? && total.positive?
               terminal.puts("#{label}...")
               return
@@ -141,7 +165,7 @@ module Dry
               total: total,
               width: [terminal.width - label.length - CHROME, MIN_BAR].max,
               output: terminal.io,
-              complete: Progress.complete(terminal.pastel, config),
+              complete: Progress.complete(terminal.pastel, config, color),
               incomplete: Progress.incomplete(terminal.pastel, config),
               clear: true,
               hide_cursor: true

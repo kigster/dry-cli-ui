@@ -12,7 +12,8 @@ require "dry/cli/help"
 require "dry/cli/autocomplete/command"
 require "dry/cli/ui"
 require "net/http"
-require "prime"
+require "concurrent"
+require "socket"
 
 module Foo
   module CLI
@@ -27,43 +28,61 @@ module Foo
         end
       end
 
-      # Shared by the two URL commands: follows redirects, and asks for the
-      # body as it is stored, so the bytes counted match Content-Length.
+      # Used by download-urls: follows up to REDIRECTS redirects on every
+      # request, and asks for the body as it is stored, so the bytes counted
+      # match Content-Length.
       module HTTP
         HEADERS = { "Accept-Encoding" => "identity" }.freeze
         REDIRECTS = 5
 
         module_function
 
+        # Statuses a server answers HEAD with when it only serves GET.
+        NO_HEAD = %w[403 405 501].freeze
+
         # @return [Array(URI, Integer, nil)] where the URL ends up, and its size when the server says
         # @raise [RuntimeError] for a response that is neither a redirect nor a success
         def resolve(url, hops = REDIRECTS)
           uri = URI(url)
           response = start(uri) { |http| http.head(uri.request_uri, HEADERS) }
-          if response.is_a?(Net::HTTPRedirection) && hops.positive?
-            return resolve(URI.join(uri, response["location"]).to_s, hops - 1)
-          end
+          return resolve(redirect(uri, response, hops), hops - 1) if response.is_a?(Net::HTTPRedirection)
+          return [uri, nil] if NO_HEAD.include?(response.code) # the GET finds out
           raise "HTTP #{response.code}" unless response.is_a?(Net::HTTPSuccess)
 
           [uri, response.content_length]
         end
 
         # @yieldparam bytes [Integer] the size of each chunk as it arrives
-        # @return [String] the body
+        # @return [Array(String, String, nil)] the body, and its media type when the server says
         # @raise [RuntimeError] for a response that is not a success
-        def download(uri)
+        def download(uri, hops = REDIRECTS, &)
           body = +""
+          type = nil
+          location = nil
           start(uri) do |http|
             http.request_get(uri.request_uri, HEADERS) do |response|
+              next location = redirect(uri, response, hops) if response.is_a?(Net::HTTPRedirection)
               raise "HTTP #{response.code}" unless response.is_a?(Net::HTTPSuccess)
 
+              type = response.content_type
               response.read_body do |chunk|
                 body << chunk
                 yield chunk.bytesize if block_given?
               end
             end
           end
-          body
+          return download(URI(location), hops - 1, &) if location
+
+          [body, type]
+        end
+
+        # @return [String] the absolute URL a redirect points to
+        # @raise [RuntimeError] once there are no hops left, or without a Location
+        def redirect(uri, response, hops)
+          raise "Too many redirects" unless hops.positive?
+          raise "HTTP #{response.code} without a Location" unless response["location"]
+
+          URI.join(uri, response["location"]).to_s
         end
 
         def start(uri, &)
@@ -71,59 +90,93 @@ module Foo
         end
       end
 
-      # One progress bar per URL, filling as bytes arrive, under a headline
-      # bar that counts every byte.
-      class FetchUrlsProgress < Dry::CLI::Command
+      # Downloads URLs, each to its own file, under a spinner or a progress bar.
+      class DownloadUrls < Dry::CLI::Command
         include Dry::CLI::UI
 
-        desc "Fetch URLs with a progress bar each, and write them all to urls.txt"
-        argument :urls, type: :array, required: true, desc: "URLs to fetch, separated by spaces"
+        # File extensions for the media types a URL's own name may not reveal.
+        EXTENSIONS = {
+          "application/gzip" => ".gz",
+          "application/javascript" => ".js",
+          "application/json" => ".json",
+          "application/pdf" => ".pdf",
+          "application/xml" => ".xml",
+          "application/zip" => ".zip",
+          "image/gif" => ".gif",
+          "image/jpeg" => ".jpg",
+          "image/png" => ".png",
+          "image/svg+xml" => ".svg",
+          "image/webp" => ".webp",
+          "text/css" => ".css",
+          "text/csv" => ".csv",
+          "text/html" => ".html",
+          "text/javascript" => ".js",
+          "text/markdown" => ".md",
+          "text/plain" => ".txt",
+          "text/xml" => ".xml"
+        }.freeze
 
-        def call(urls:, **)
-          # A bar's total is fixed when it is declared, so ask each URL for its
-          # size first, with a HEAD request. A URL that fails here is left out.
-          found = urls.filter_map do |url|
-            [url, *HTTP.resolve(url)]
-          rescue StandardError => e
-            ui.status "#{url}: #{e.message}", level: :warn
-            nil
+        # The most URLs downloaded at once.
+        CONCURRENCY = 10
+
+        desc "Download URLs, each to its own file"
+        argument :urls, type: :array, required: false, desc: "URLs to download, separated by spaces"
+        option :'urls-file', aliases: ["-u"], desc: "A file with one URL per line; blank lines and # comments are skipped"
+        option :'save-to', default: ".", desc: "Directory to save the files in, created when missing"
+        option :progress, type: :flag, default: false, desc: "Show a progress bar per URL"
+        option :spinner, type: :flag, default: false, desc: "Show a spinner per URL; used when neither flag is given"
+
+        def call(urls: [], progress: false, spinner: false, **options)
+          return ui.error("Pick one of --progress and --spinner, not both") if progress && spinner
+
+          urls_file = options[:'urls-file']
+          save_to = options.fetch(:'save-to', ".")
+
+          begin
+            urls += read_urls(urls_file) if urls_file
+          rescue SystemCallError => e
+            return ui.error("Cannot read #{urls_file}", e.message)
           end
-          return ui.error("None of the #{urls.size} URLs could be fetched") if found.empty?
-
-          bodies = ui.multi_progress("Fetching #{found.size} URLs", concurrent: 8) do |m|
-            found.each do |url, uri, size|
-              m.progress(url, total: size || 1) do |bar|
-                sleep rand(1..4)
-                # Move the bar one byte at a time, as each chunk arrives.
-                body = HTTP.download(uri) { |bytes| bytes.times { bar.advance } if size }
-                bar.advance unless size # no Content-Length: done in one step
-                body
-              end
-            end
-          end
-
-          File.write("urls.txt", bodies.join("\n"))
-          ui.success "Wrote #{bodies.sum(&:bytesize)} bytes from #{found.size} of #{urls.size} URLs to urls.txt"
-        rescue StandardError => e
-          ui.error("Fetching failed", e.message)
+          urls, invalid = urls.partition { |url| valid?(url) }
+          download(urls, save_to, progress)
+          ui.warn "Skipped #{invalid.size} invalid URLs", invalid.join("\n") if invalid.any?
         end
-      end
 
-      # One spinner per URL, each saying what it is doing, and one file per URL.
-      class FetchUrls < Dry::CLI::Command
-        include Dry::CLI::UI
+        private
 
-        desc "Fetch URLs with a spinner each, and write each to its own file"
-        argument :urls, type: :array, required: true, desc: "URLs to fetch, separated by spaces"
+        def download(urls, save_to, progress)
+          return ui.error("No URLs to download", "Pass them as arguments, or in a file with --urls-file") if urls.empty?
 
-        def call(urls:, **)
-          bodies = ui.multi_spinner("Fetching #{urls.size} URLs", concurrent: 8) do |m|
+          begin
+            FileUtils.mkdir_p(save_to)
+          rescue SystemCallError => e
+            return ui.error("Cannot create #{save_to}", e.message)
+          end
+
+          downloads = progress ? with_progress(urls) : with_spinner(urls)
+          files = urls.zip(downloads).filter_map do |url, (body, type)|
+            next unless body
+
+            File.join(save_to, filename(url, type)).tap { |file| File.write(file, body) }
+          end
+          ui.success "Wrote #{files.size} of #{urls.size} URLs", files.join("\n")
+        end
+
+        # An http or https URL with a host.
+        def valid?(url)
+          uri = URI.parse(url)
+          uri.is_a?(URI::HTTP) && !uri.host.to_s.empty?
+        rescue URI::InvalidURIError
+          false
+        end
+
+        def with_spinner(urls)
+          ui.multi_spinner("Downloading #{urls.size} URLs", concurrent: CONCURRENCY) do |m|
             urls.each do |url|
               m.spinner(url) do |line|
                 line.detail = "resolving"
                 uri, = HTTP.resolve(url)
                 line.detail = "downloading #{uri.host}"
-                sleep rand(1..4) # slow enough to watch
                 HTTP.download(uri)
               rescue StandardError => e
                 line.fail(e.message)
@@ -131,76 +184,199 @@ module Foo
               end
             end
           end
+        end
 
-          files = urls.zip(bodies).filter_map do |url, body|
-            next unless body
-
-            "#{friendly_filename(url)}.txt".tap { |file| File.write(file, body) }
+        # A bar's total is fixed when it is declared, so ask each URL for its
+        # size first, with a HEAD request. A URL that fails here is left out.
+        def with_progress(urls)
+          found = urls.to_h do |url|
+            [url, HTTP.resolve(url)]
+          rescue StandardError => e
+            ui.status "#{url}: #{e.message}", level: :warn
+            [url, nil]
           end
-          ui.success "Wrote #{files.size} of #{urls.size} URLs", files.join("\n")
+          ready = found.select { |_, (uri, _)| uri }
+          return urls.map { nil } if ready.empty?
+
+          # A bar cannot be marked failed, so a download that fails is
+          # reported once every bar has finished.
+          errors = Concurrent::Array.new
+          bodies = ui.multi_progress("Downloading #{ready.size} URLs", concurrent: CONCURRENCY) do |m|
+            ready.each do |url, (uri, size)|
+              m.progress(url, total: size || 1) do |bar|
+                download = HTTP.download(uri) { |bytes| bar.advance(bytes) if size }
+                bar.advance unless size # no Content-Length: done in one step
+                download
+              rescue StandardError => e
+                errors << "#{url}: #{e.message}"
+                nil
+              end
+            end
+          end
+          errors.each { |error| ui.status error, level: :warn }
+          downloads = ready.keys.zip(bodies).to_h
+          urls.map { |url| downloads[url] }
+        end
+
+        def read_urls(file)
+          File.readlines(file, chomp: true).map(&:strip).reject { |line| line.empty? || line.start_with?("#") }
+        end
+
+        # The URL's host, path and query as one safe name, keeping the path's
+        # extension. Without one, the extension comes from the media type,
+        # and is .txt when that is unknown too.
+        def filename(url, type)
+          uri = URI(url)
+          extension = File.extname(uri.path)
+          stem = "#{uri.host}#{uri.path.delete_suffix(extension)}#{"_#{uri.query}" if uri.query}"
+          extension = EXTENSIONS.fetch(type, ".txt") if extension.empty?
+          "#{stem.gsub(/[^\w.-]+/, '_').delete_suffix('_')}#{extension}"
+        end
+      end
+
+      # Scans the local /24 subnet for hosts that answer on TCP ports, with a
+      # spinner or a progress bar for every address.
+      class FindHosts < Dry::CLI::Command
+        include Dry::CLI::UI
+
+        # Well-known TCP ports: SSH, DNS, HTTP, NTP, NetBIOS, HTTPS, SMB, IPP,
+        # RDP, and the two AirPlay and Synology use.
+        COMMON_PORTS = [22, 53, 80, 123, 139, 443, 445, 631, 3389, 5000, 7000].freeze
+
+        # How many addresses are probed at once. Each probes its ports all at
+        # once, so this keeps open sockets well under the default limit of 256.
+        CONCURRENCY = 10
+
+        desc "Find hosts on the local network that answer on TCP ports"
+        option :port, type: :integer, desc: "Probe only this TCP port, instead of #{COMMON_PORTS.join(', ')}"
+        option :timeout, type: :float, default: 0.5, aliases: ["-t"], desc: "Seconds to wait for each port"
+        option :output, aliases: ["-o"], desc: "Also write the hosts to this file"
+        option :progress, type: :flag, default: false, aliases: ["-p"], desc: "Show progress bars; the default with --port"
+        option :spinner, type: :flag, default: false, aliases: ["-s"], desc: "Show spinners; the default without --port"
+
+        def call(timeout:, port: nil, output: nil, progress: false, spinner: false, **)
+          return ui.error("Pick one of --progress and --spinner, not both") if progress && spinner
+
+          ip = local_ip or return ui.error("No local IPv4 address found")
+          subnet = ip.split(".").first(3).join(".")
+          ips = (1..254).map { |i| "#{subnet}.#{i}" }
+          ports = port ? [port.to_i] : COMMON_PORTS
+          ui.info "Local IP: #{ip}, scanning #{subnet}.1-254 on #{ports.size == 1 ? 'port' : 'ports'} #{ports.join(', ')}"
+
+          progress ||= port && !spinner
+          results = progress ? with_progress(ips, ports, timeout.to_f) : with_spinner(ips, ports, timeout.to_f)
+          hosts = ips.zip(results).select { |_, open| open }
+          return ui.warn("No hosts answered on #{ports.join(', ')}") if hosts.empty?
+
+          lines = hosts.map { |host, open| "#{host}: #{open.empty? ? 'no open ports' : open.join(', ')}" }
+          File.write(output, lines.join("\n") << "\n") if output
+          ui.success "Found #{hosts.size} hosts", lines.join("\n"), *("Written to #{output}" if output)
         end
 
         private
 
-        def friendly_filename(url)
-          url.sub(%r{\Ahttps?://}, "").gsub(/[^\w.-]+/, "_").delete_suffix("_")
-        end
-      end
-
-      class ComputePrimes < Dry::CLI::Command
-        include Dry::CLI::UI
-
-        def self.closest_prime(n)
-          # Primes must be greater than 1
-          return 2 if n <= 2
-          return n if ::Prime.prime?(n)
-
-          distance = 1
-          loop do
-            lower = n - distance
-            upper = n + distance
-
-            primes = []
-            primes << lower if lower > 1 && ::Prime.prime?(lower)
-            primes << upper if ::Prime.prime?(upper)
-
-            # Return the prime(s) found at the shortest distance
-            return primes.size == 1 ? primes.first : primes if primes.any?
-
-            distance += 1
-          end
+        def local_ip
+          Socket.getifaddrs
+                .map(&:addr)
+                .find { |addr| addr&.ipv4? && !addr.ipv4_loopback? }
+                &.ip_address
         end
 
-        desc 'Compute closest prime to a given number in the array'
-        option :max, default: 100_000, desc: "Maximum integer to compute closest primes for", type: :integer
-
-        def call(max:)
-          ui.info "Computing closest primes..."
-          File.open('primes.txt', 'w') do |f|
-            integers = (1..max.to_i)
-            ui.progress("Computing Primes", total: integers.size) do |bar|
-              integers.each do |i|
-                p = ComputePrimes.closest_prime(i)
-                f.puts "closest prime to #{i} is #{p}"
-                bar.advance
+        # A spinner per address, counting the ports answered so far. An
+        # address where nothing answered is marked failed.
+        def with_spinner(ips, ports, timeout)
+          ui.multi_spinner("Probing #{ips.size} addresses", concurrent: CONCURRENCY) do |m|
+            ips.each do |ip|
+              m.spinner(ip) do |line|
+                answered = Concurrent::AtomicFixnum.new
+                open = scan(ip, ports, timeout) { line.detail = "#{answered.increment} of #{ports.size} ports" }
+                line.fail("no answer") unless open
+                open
               end
             end
           end
-          ui.success("Computed #{max} primes, they are in the 'primes.txt' files.")
-        rescue StandardError => e
-          ui.error("Import failed", e.message)
+        end
+
+        # A progress bar per address, advancing as each port answers or times out.
+        # Two bars, one counting the addresses that answered and one those
+        # that did not. Each bar's block is given only its own handle, so the
+        # "No answer" job hands its bar to the "Answered" job, which runs the
+        # scan, and then waits for the scan to end.
+        def with_progress(ips, ports, timeout)
+          silent_bar = Concurrent::Promises.resolvable_future
+          scanned = Concurrent::Promises.resolvable_future
+          results = nil
+          ui.multi_progress("Probing #{ips.size} addresses") do |m|
+            m.progress("Answered", total: ips.size, color: :green) do |answered|
+              silent = silent_bar.value!
+              results = in_parallel(ips) do |ip|
+                scan(ip, ports, timeout) { nil }.tap { |open| (open ? answered : silent).advance }
+              end
+            ensure
+              scanned.fulfill(true)
+            end
+            m.progress("No answer", total: ips.size, color: :red) do |silent|
+              silent_bar.fulfill(silent)
+              scanned.wait
+            end
+          end
+          results
+        end
+
+        # Runs the block for each item, at most CONCURRENCY at once.
+        #
+        # @return [Array] what the block returned for each item, in order
+        def in_parallel(items)
+          queue = Queue.new
+          items.each_with_index { |item, index| queue << [item, index] }
+          queue.close
+          results = Array.new(items.size)
+          Array.new(CONCURRENCY) do
+            Thread.new do
+              while (pair = queue.pop)
+                item, index = pair
+                results[index] = yield item
+              end
+            end
+          end.each(&:join)
+          results
+        end
+
+        # Probes every port on an address at once.
+        #
+        # @yield once for each port, as its probe ends
+        # @return [Array<Integer>, nil] the open ports, empty when every port
+        #   refused; nil when nothing answered at all
+        def scan(ip, ports, timeout, &)
+          states = ports.map do |port|
+            Thread.new do
+              probe(ip, port, timeout).tap(&)
+            end
+          end.map(&:value)
+          return if states.all?(:silent)
+
+          ports.zip(states).filter_map { |port, state| port if state == :open }
+        end
+
+        # A refused connection still means something is at that address.
+        #
+        # @return [Symbol] :open, :closed, or :silent when nothing answered
+        def probe(ip, port, timeout)
+          Socket.tcp(ip, port, connect_timeout: timeout).close
+          :open
+        rescue Errno::ECONNREFUSED
+          :closed
+        rescue SystemCallError, IOError, SocketError
+          :silent
         end
       end
 
-      register "version",         Version, aliases: ["v", "-v", "--version"]
-      register "urls_progress",   FetchUrlsProgress
-      register "urls_spinner",    FetchUrls
-      register "completion",      ::Dry::CLI::Autocomplete::Command[::Foo::CLI::Commands], hidden: true
-      register "primes",          ComputePrimes
+      register "version", Version, aliases: ["v", "-v", "--version"]
+      register "download-urls", DownloadUrls
+      register "find-hosts", FindHosts
+      register "completion", ::Dry::CLI::Autocomplete::Command[::Foo::CLI::Commands], hidden: true
     end
   end
 end
 
 Dry::CLI.new(Foo::CLI::Commands).call
-
-FileUtils.rm_f(Dir.glob("#{File.expand_path('../', __dir__)}/*.txt"))

@@ -306,12 +306,12 @@ end
 
 `Dry::CLI::UI.configure` sets how every spinner and bar in the process looks. A `Console` reads `Dry::CLI::UI.config` unless given `config:`.
 
-| Setting          | Takes                                                                        | Default                              | Draws                                |
-| ---------------- | ---------------------------------------------------------------------------- | ------------------------------------ | ------------------------------------ |
-| `spinner_format` | A `TTY::Formats::FORMATS` name, or `{ interval:, frames: }`                  | `:dots`                              | `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏`, 10 a second   |
-| `bar_format`     | A `TTY::ProgressBar::Formats::FORMATS` name, or `{ complete:, incomplete: }` | `{ complete: "◼", incomplete: " " }` | `[◼◼◼   ]`                           |
-| `bar_color`      | A Pastel style, or nil                                                       | `:green`                             | The finished part of every bar       |
-| `bar_background` | A Pastel style, or nil                                                       | `:on_bright_black`                   | The whole of every bar, a gray track |
+| Setting          | Takes                                                                        | Default                              | Draws                              |
+| ---------------- | ---------------------------------------------------------------------------- | ------------------------------------ | ---------------------------------- |
+| `spinner_format` | A `TTY::Formats::FORMATS` name, or `{ interval:, frames: }`                  | `:dots`                              | `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏`, 10 a second |
+| `bar_format`     | A `TTY::ProgressBar::Formats::FORMATS` name, or `{ complete:, incomplete: }` | `{ complete: "◼", incomplete: " " }` | `[◼◼◼   ]`                         |
+| `bar_color`      | A Pastel style, or nil                                                       | `:green`                             | The finished part of every bar     |
+| `bar_background` | A Pastel style, or nil                                                       | `nil`                                | The whole of every bar, a track    |
 
 An unknown name, a malformed definition or a style Pastel does not know raises `ArgumentError` when it is set, not when a spinner first turns. Loading the configuration loads only the two format tables and Pastel, never a TTY widget. Colours follow the stream, as everything else does: without colour a bar is its characters alone, and the brackets show its extent.
 

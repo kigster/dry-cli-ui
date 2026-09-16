@@ -56,7 +56,7 @@ module Dry
         def popup: (*_ToS paragraphs, ?title: String?, ?width: Integer?) -> nil
         def spinner: [T] (String label) { (Line line) -> T } -> T
         def multi_spinner: (String title, ?concurrent: (bool | Integer)) { (untyped spinners) -> void } -> Array[untyped]
-        def progress: [T] (String label, total: Integer) { (untyped progress) -> T } -> T
+        def progress: [T] (String label, total: Integer, ?color: Symbol?) { (untyped progress) -> T } -> T
         def multi_progress: (String title, ?concurrent: (bool | Integer)) { (untyped bars) -> void } -> Array[untyped]
         def status_bar: [T] (?String? title, ?hints: Array[String] | String) { () -> T } -> T
         def tasks: (?String? title, ?concurrent: (bool | Integer)) { (untyped tasks) -> void } -> nil

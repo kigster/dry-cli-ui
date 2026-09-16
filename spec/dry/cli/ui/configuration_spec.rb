@@ -7,7 +7,7 @@ RSpec.describe Dry::CLI::UI::Configuration do
     its(:spinner_format) { is_expected.to eq(:dots) }
     its(:bar_format) { is_expected.to eq(complete: "◼", incomplete: " ") }
     its(:bar_color) { is_expected.to eq(:green) }
-    its(:bar_background) { is_expected.to eq(:on_bright_black) }
+    its(:bar_background) { is_expected.to be_nil }
     its(:spinner_frames) { is_expected.to eq(%w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏]) }
     its(:spinner_frame_seconds) { is_expected.to eq(0.1) }
     its(:bar_complete) { is_expected.to eq("◼") }

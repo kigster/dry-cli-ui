@@ -27,6 +27,12 @@ RSpec.describe Dry::CLI::UI::Widgets::Progress do
       expect(io.string).to end_with("𝘅 Importing 1/3 (0.5s)\n")
     end
 
+    it "rejects a colour Pastel does not know, before the block runs" do
+      expect { progress.run("Importing", total: 1, color: :nope) { raise "ran" } }
+        .to raise_error(ArgumentError, "color must be a Pastel style or nil, got :nope")
+      expect(io.string).to be_empty
+    end
+
     it "rejects a total that is not a count" do
       expect { progress.run("Importing", total: -1) { nil } }.to raise_error(ArgumentError, /non-negative Integer/)
       expect { progress.run("Importing", total: 1.5) { nil } }.to raise_error(ArgumentError)
@@ -48,6 +54,12 @@ RSpec.describe Dry::CLI::UI::Widgets::Progress do
       expect(plain(io.string)).to end_with("𝘅 Importing 1/4 (0.5s)\n")
     end
 
+    it "paints the finished part in its own colour" do
+      described_class.new(Dry::CLI::UI::Terminal.new(io, env: {}, width: 80, color: true), clock: FakeClock.new)
+                     .run("Importing", total: 2, color: :red) { |bar| bar.advance(2) }
+      expect(io.string).to include("\e[31m◼").and exclude("\e[32m◼")
+    end
+
     it "draws no bar for an empty job" do
       progress.run("Importing", total: 0) { nil }
       expect(plain(io.string)).to eq("Importing...\n✓ Importing 0/0 (0.5s)\n")
@@ -58,13 +70,21 @@ RSpec.describe Dry::CLI::UI::Widgets::Progress do
     let(:config) { Dry::CLI::UI::Configuration.new }
     let(:pastel) { Pastel.new(enabled: true) }
 
-    it "paints the finished part green, and all of it on gray" do
-      expect(described_class.bar(pastel, config, 0.5, 4))
-        .to eq("[\e[32;100m◼\e[0m\e[32;100m◼\e[0m\e[100m \e[0m\e[100m \e[0m]")
+    it "paints the finished part green, on no background" do
+      expect(described_class.bar(pastel, config, 0.5, 4)).to eq("[\e[32m◼\e[0m\e[32m◼\e[0m  ]")
+    end
+
+    it "paints all of it on the background, when one is set" do
+      config.bar_background = :on_blue
+      expect(described_class.bar(pastel, config, 0.5, 2)).to eq("[\e[32;44m◼\e[0m\e[44m \e[0m]")
     end
 
     it "draws the characters alone when colour is off" do
       expect(described_class.bar(Pastel.new(enabled: false), config, 0.25, 4)).to eq("[◼   ]")
+    end
+
+    it "paints the finished part in the colour given instead" do
+      expect(described_class.bar(pastel, config, 0.5, 2, color: :red)).to eq("[\e[31m◼\e[0m ]")
     end
 
     it "leaves out what is not set" do
@@ -79,6 +99,7 @@ RSpec.describe Dry::CLI::UI::Widgets::Progress do
 
     its(:total) { is_expected.to eq(3) }
     its(:current) { is_expected.to eq(0) }
+    its(:color) { is_expected.to be_nil }
     it { expect(handle.advance).to be(handle) }
     it { expect(handle.advance(2).current).to eq(2) }
     it { expect(handle.advance(10).current).to eq(3) }

@@ -24,12 +24,12 @@ module Dry
       # Anything not set reads from {DEFAULTS}.
       class Configuration
         # What a setting reads before it is set: a green `◼` for each finished
-        # part of a bar, over a gray track the whole bar's width.
+        # part of a bar, with no background behind it.
         DEFAULTS = {
           spinner_format: :dots,
           bar_format: { complete: "◼", incomplete: " " }.freeze,
           bar_color: :green,
-          bar_background: :on_bright_black
+          bar_background: nil
         }.freeze
 
         # Every style name Pastel knows, for checking colour settings.
@@ -59,7 +59,7 @@ module Dry
         #   @return [Symbol, nil]
         # @!method bar_background(value = UNSET)
         #   Reads the background the whole bar is drawn on, or sets it.
-        #   @param value [Symbol, nil] a Pastel style, such as :on_bright_black; nil for none
+        #   @param value [Symbol, nil] a Pastel style, such as :on_blue; nil for none
         #   @return [Symbol, nil]
         DEFAULTS.each_key do |name|
           define_method(name) do |value = UNSET|
