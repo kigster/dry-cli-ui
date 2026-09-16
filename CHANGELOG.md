@@ -1,3 +1,11 @@
+## [0.5.1]
+
+- `ui.stoppable { |stop| ... }` makes Ctrl-C ask for a stop instead of interrupting, and `ui.multi_spinner` and `ui.multi_progress` take `stop:`. Once it is set, the jobs running finish, the rest are skipped, and the headline says `stopping`, then ends skipped. A second Ctrl-C interrupts. `Dry::CLI::UI::Stop` is the object behind it.
+- `ui.multi_spinner` and `ui.multi_progress` stay animated when their rows do not fit on the screen. Only the running jobs are shown under the headline, as many as fit. Before, every row was printed one by one.
+- `m.progress` inside `ui.multi_progress` takes `total: nil` for a job that learns its size as it runs. Its bar is empty and counts `12/?` until the job sets `bar.total =`, which every progress handle now has.
+- `ui.multi_progress` takes `count: :jobs`, so the headline bar counts the jobs that ended, and `total:`, the headline's own total for bars that overlap.
+- `examples/bin/mycli download-urls` sends each URL's `HEAD` request when its turn comes, not all of them first, and writes each file as its body arrives. `find-hosts --progress` gives its headline a total of the addresses scanned, not twice that. Both take `-c/--concurrency`, from 1 to 100, 10 by default, and on Ctrl-C finish what is running and report how many URLs were downloaded or addresses scanned.
+
 ## [0.5.0]
 
 - The README documents every public method, option and error, with the plain output each widget prints when piped, and a section on testing a command with `StringIO`.
