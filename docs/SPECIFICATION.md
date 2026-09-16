@@ -1,5 +1,8 @@
 # `dry-cli-ui`
 
+> [!NOTE]
+> This is the specification for version 0.1.0 of the gem. Later versions add to it; see the [README](../README.md) for the current API.
+
 Rich runtime terminal UI for [`dry-cli`](https://github.com/dry-rb/dry-cli) commands.
 
 ## Purpose
