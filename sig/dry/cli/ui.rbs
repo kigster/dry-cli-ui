@@ -44,6 +44,12 @@ module Dry
         def summary: (String label) -> String
       end
 
+      class Stop
+        def stopped?: () -> bool
+        def stop!: () -> self
+        def trap: [T] (?String signal) { (Stop stop) -> T } -> T
+      end
+
       class Console
         def debug: (*_ToS paragraphs, ?width: Integer?) -> nil
         def info: (*_ToS paragraphs, ?width: Integer?) -> nil
@@ -55,9 +61,10 @@ module Dry
         def status: (*_ToS words, ?level: Symbol) -> nil
         def popup: (*_ToS paragraphs, ?title: String?, ?width: Integer?) -> nil
         def spinner: [T] (String label) { (Line line) -> T } -> T
-        def multi_spinner: (String title, ?concurrent: (bool | Integer)) { (untyped spinners) -> void } -> Array[untyped]
+        def multi_spinner: (String title, ?concurrent: (bool | Integer), ?stop: Stop?) { (untyped spinners) -> void } -> Array[untyped]
         def progress: [T] (String label, total: Integer, ?color: Symbol?) { (untyped progress) -> T } -> T
-        def multi_progress: (String title, ?concurrent: (bool | Integer)) { (untyped bars) -> void } -> Array[untyped]
+        def multi_progress: (String title, ?concurrent: (bool | Integer), ?count: (:units | :jobs), ?total: Integer?, ?stop: Stop?) { (untyped bars) -> void } -> Array[untyped]
+        def stoppable: [T] () { (Stop stop) -> T } -> T
         def status_bar: [T] (?String? title, ?hints: Array[String] | String) { () -> T } -> T
         def tasks: (?String? title, ?concurrent: (bool | Integer)) { (untyped tasks) -> void } -> nil
         def table: (Array[Array[_ToS]] rows, ?header: Array[_ToS]?) -> nil

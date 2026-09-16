@@ -300,7 +300,8 @@ end
 - The headline turns while any job runs and ends `✓` when every job succeeded, `𝘅` otherwise. Every row, the headline's included, is marked in brackets as task rows are: `[ ]` while waiting, a turning `[⠏]` while running, then `[✓]`, `[𝘅]` or `[—]` with its elapsed time.
 - `multi_spinner` gives each job a `Line`; its detail follows the label while the job runs, and `fail` marks the job `𝘅 label: reason` without raising. `multi_progress` gives each job a `Widgets::Progress::Handle`; its row shows a bar, a percentage, a count and an ETA, and the headline's bar counts every job. Labels are padded so every bar starts and ends in the same columns.
 - When a job raises, jobs already running finish, jobs not yet started are marked skipped, and the first error is re-raised.
-- As with task trees, rows are redrawn in place only when they all fit on the screen; otherwise they print as without animation.
+- Rows are redrawn in place on an animated terminal. When they do not all fit on the screen, only the running jobs are shown, as many as fit.
+- Given a `stop:` that is set, often by Ctrl-C under `ui.stoppable`, no more jobs start; running jobs finish, the rest are skipped, and the headline says `stopping`, then ends skipped unless a job failed.
 
 ### Configuration
 

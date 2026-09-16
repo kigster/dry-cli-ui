@@ -71,6 +71,32 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiSpinner do
       expect(most.value).to eq(2)
     end
 
+    context "when a stop is asked for" do
+      let(:stop) { Dry::CLI::UI::Stop.new }
+      let(:ran) { Concurrent::Array.new }
+      let(:jobs) do
+        lambda do |m|
+          m.spinner("fonts") { (ran << :fonts) && stop.stop! && :fonts }
+          m.spinner("images") { (ran << :images) && :images }
+        end
+      end
+
+      it "starts no more jobs one at a time, and marks the rest and the headline skipped" do
+        expect(multi.run("Fetching", concurrent: false, stop: stop, &jobs)).to eq([:fonts, nil])
+        expect(io.string).to include("  [✓] fonts", "  [—] images\n").and end_with("— Fetching (1.5s)\n")
+      end
+
+      it "starts no more jobs under a limit" do
+        multi.run("Fetching", concurrent: 1, stop: stop, &jobs)
+        expect(ran).to eq([:fonts])
+      end
+
+      it "has already started every job when they all run at once" do
+        multi.run("Fetching", stop: stop, &jobs)
+        expect(ran).to contain_exactly(:fonts, :images)
+      end
+    end
+
     it "rejects a job without a block" do
       expect { multi.run("Fetching") { |m| m.spinner("fonts") } }.to raise_error(ArgumentError, /needs a block/)
     end
@@ -98,6 +124,12 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiSpinner do
         expect(plain(io.string)).to end_with("[✓] Fetching (0.0s)\n├─ [✓] fonts (0.0s)\n└─ [✓] images (0.0s)\n")
       end
 
+      it "says it is stopping while the running jobs finish, and is done when none were skipped" do
+        stop = Dry::CLI::UI::Stop.new
+        multi.run("Fetching", stop: stop) { |m| m.spinner("fonts") { stop.stop! && sleep(0.15) } }
+        expect(plain(io.string)).to include("] Fetching stopping\n").and end_with("[✓] Fetching (0.0s)\n└─ [✓] fonts (0.0s)\n")
+      end
+
       it "takes its frames from the configuration" do
         config = Dry::CLI::UI::Configuration.new.tap { it.spinner_format = { interval: 50, frames: %w[A B] } }
         described_class.new(terminal, clock: clock, config: config).run("Fetching") { |m| m.spinner("fonts") { sleep(0.1) } }
@@ -106,11 +138,29 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiSpinner do
     end
 
     context "with more rows than the screen" do
-      let(:height) { 3 }
+      let(:height) { 4 }
+      let(:drawn) { plain(io.string) }
 
-      it "prints each outcome once instead" do
-        multi.run("Fetching", &fetch)
-        expect(plain(io.string)).to start_with("Fetching...\n").and end_with("✓ Fetching (0.0s)\n")
+      before do
+        multi.run("Fetching", concurrent: 1) do |m|
+          %w[a b c d].each { |name| m.spinner(name) { sleep(0.02) } }
+        end
+      end
+
+      it "leaves out the jobs waiting" do
+        expect(drawn).to start_with("[⠋] Fetching\n[⠋] Fetching\n└─ [⠋] a\n")
+      end
+
+      it "shows only the jobs running" do
+        expect(drawn).to include("[⠋] Fetching\n└─ [⠋] c\n").and exclude("[✓] b")
+      end
+
+      it "ends with the headline alone" do
+        expect(drawn).to end_with("[⠋] Fetching\n[✓] Fetching (0.0s)\n")
+      end
+
+      it "clears the rows below before each redraw" do
+        expect(io.string).to include("\e[2A\e[J")
       end
     end
   end

@@ -16,8 +16,13 @@ module Dry
         # limit, is drawn before the first job starts.
         #
         # On an animated terminal the rows are drawn once and redrawn in place.
-        # Otherwise, or when there are more rows than the screen has, it prints
-        # `Title...`, then each job's outcome as it ends, then the headline's.
+        # When there are more rows than the screen has, only the jobs running
+        # are shown under the headline, as many as fit. Without animation it
+        # prints `Title...`, then each job's outcome as it ends, then the headline's.
+        #
+        # Given a {Stop} that is set, jobs already running finish, jobs not yet
+        # started are marked skipped, and so is the headline; while the running
+        # jobs finish, the headline says `stopping`.
         #
         # When a job raises, jobs already running finish, jobs not yet started
         # are marked skipped, the headline is marked failed, and the first error
@@ -72,6 +77,7 @@ module Dry
             @live = nil
             @lock = Mutex.new
             @frame = 0
+            @drawn = 0
           end
 
           # Declares the jobs with the block, then runs them.
@@ -79,19 +85,21 @@ module Dry
           # @param title [String] the headline above the jobs
           # @param concurrent [Boolean, Integer] all at once, one at a time, or
           #   at most this many at once
+          # @param stop [Stop, nil] once set, no more jobs start
           # @yieldparam builder [Object] declares the jobs
           # @return [Array<Object>] what each job returned, in declaration
           #   order; nil for a job that never ran
           # @raise [ArgumentError] with an invalid concurrent
           # @raise [Exception] the first error a job raised
-          def run(title, concurrent: true)
+          def run(title, concurrent: true, stop: nil)
             Pool.concurrency(concurrent)
             yield builder
             @title = title
+            @stop = stop
             @started = clock.call
             ticker = start
             begin
-              Pool.run(jobs, concurrent) { |job| execute(job) }
+              Pool.run(jobs, concurrent, stop: stop) { |job| execute(job) }
             ensure
               ticker&.shutdown
               ticker&.wait_for_termination(1)
@@ -116,6 +124,9 @@ module Dry
 
           # @return [String]
           attr_reader :title
+
+          # @return [Stop, nil]
+          attr_reader :stop
 
           # @return [Float] when the headline started, by the clock
           attr_reader :started
@@ -182,7 +193,9 @@ module Dry
               return
             end
 
-            rows.each { |row| terminal.puts(row) }
+            drawn = rows
+            drawn.each { |row| terminal.puts(row) }
+            @drawn = drawn.size
             Concurrent::TimerTask.new(execution_interval: config.spinner_frame_seconds) { tick }.tap(&:execute)
           end
 
@@ -206,10 +219,19 @@ module Dry
           def finish
             jobs.each { |job| change(job, :skipped) if job.state == :pending }
             lock.synchronize do
-              self.state = jobs.all? { |job| job.state == :done } ? :done : :failed
+              self.state = outcome
               @seconds = clock.call - started
               live? ? redraw : terminal.puts(Outcome.line(terminal, state, headline_summary, @seconds))
             end
+          end
+
+          # @return [Symbol] the headline's state once every job has ended:
+          #   failed when any job failed, skipped when any was skipped
+          def outcome
+            states = jobs.map(&:state)
+            return :failed if states.include?(:failed)
+
+            states.include?(:skipped) ? :skipped : :done
           end
 
           # @param job [Job]
@@ -228,13 +250,21 @@ module Dry
             end
           end
 
-          # Whether to redraw in place: needs cursor movement, and every row on
-          # the screen, since the cursor cannot move above the top row.
+          # Whether to redraw in place, which needs cursor movement.
           #
           # @return [Boolean]
           def live?
-            @live = terminal.animated? && jobs.size + 1 < terminal.height if @live.nil?
+            @live = terminal.animated? if @live.nil?
             @live
+          end
+
+          # Whether some rows must be left out, since the cursor cannot move
+          # above the top row of the screen.
+          #
+          # @return [Boolean]
+          def crowded?
+            @crowded = jobs.size + 1 >= terminal.height if @crowded.nil?
+            @crowded
           end
 
           # @return [void]
@@ -245,18 +275,34 @@ module Dry
             end
           end
 
+          # Draws the rows over the ones drawn last, clearing the screen below
+          # first, since there may be fewer rows than before.
+          #
           # @return [void]
           def redraw
-            terminal.print(terminal.cursor.up(jobs.size + 1) + rows.map { |row| "#{terminal.cursor.clear_line}#{row}\n" }.join)
+            drawn = rows
+            terminal.print(terminal.cursor.up(@drawn) + terminal.cursor.clear_screen_down + drawn.map { |row| "#{terminal.cursor.clear_line}#{row}\n" }.join)
+            @drawn = drawn.size
           end
 
-          # The headline, then one row per job with its tree branch.
+          # The headline, then one row per job shown, with its tree branch.
           #
           # @return [Array<String>]
           def rows
             width = label_width
-            branches = jobs.each_with_index.map { |_, index| index == jobs.size - 1 ? "└─ " : "├─ " }
-            [headline(width), *jobs.zip(branches).map { |job, branch| terminal.pastel.bright_black(branch) + row(job, width - branch.length) }]
+            shown = visible
+            branches = shown.each_index.map { |index| index == shown.size - 1 ? "└─ " : "├─ " }
+            [headline(width), *shown.zip(branches).map { |job, branch| terminal.pastel.bright_black(branch) + row(job, width - branch.length) }]
+          end
+
+          # Every job; when crowded, only the running ones, as many as leave
+          # the bottom row free.
+          #
+          # @return [Array<Job>]
+          def visible
+            return jobs unless crowded?
+
+            jobs.select { |job| job.state == :running }.first([terminal.height - 2, 0].max)
           end
 
           # The columns every label is padded to, so what follows lines up.
@@ -269,11 +315,14 @@ module Dry
           # @param width [Integer]
           # @return [String]
           def headline(width)
-            return "#{glyph(state)} #{running_headline(width)}" if state == :running
+            return "#{glyph(state)} #{running_headline(width)}#{stopping}" if state == :running
 
             elapsed = " #{terminal.pastel.bright_black("(#{Duration.format(@seconds)})")}"
             "#{glyph(state)} #{headline_summary}#{elapsed}"
           end
+
+          # @return [String] ` stopping` once a stop is asked for, or nothing
+          def stopping = stop&.stopped? ? " #{terminal.pastel.yellow('stopping')}" : ""
 
           # @param job [Job]
           # @param width [Integer] the columns its label is padded to
