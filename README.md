@@ -267,6 +267,7 @@ end
 ```
 
 - `advance(step = 1)` adds to `current` and returns the handle; `current` never passes `total`.
+- `total = n` sets the total once the work finds out, such as a download learning its size, and lowers `current` to fit. Anything but a non-negative Integer raises `ArgumentError`.
 - `total:` must be a non-negative Integer, or `progress` raises `ArgumentError`.
 - `total: 0` draws no bar, and ends `✓ Copying 0/0`.
 - `color:` paints this bar's finished part in any Pastel style, such as `color: :red`, instead of the configured `bar_color`. A style Pastel does not know raises `ArgumentError` before the block runs.
@@ -328,7 +329,13 @@ Fetching...
 𝘅 Fetching (0.1s)
 ```
 
-The rows are also printed one by one on a terminal that has fewer rows than the widget needs, since the cursor cannot move above the top of the screen.
+On a terminal with fewer rows than the widget needs, the cursor cannot reach them all, so only the jobs running are shown under the headline, as many as fit. Jobs leave the screen as they end, and the headline is all that remains:
+
+```text
+[⠋] Fetching
+├─ [⠋] video
+└─ [⠋] audio
+```
 
 ### Several progress bars at once
 
@@ -354,13 +361,43 @@ The same shape as `multi_spinner`, with a bar per job and a headline bar that co
 Each job is given the same handle as `ui.progress`, with `advance(step = 1)`, `current` and `total`. `m.progress` takes `color:` as `ui.progress` does, so bars side by side can differ:
 
 ```ruby
-ui.multi_progress("Probing #{hosts.size} hosts") do |m|
+ui.multi_progress("Probing #{hosts.size} hosts", total: hosts.size) do |m|
   m.progress("Answered", total: hosts.size, color: :green) { |bar| ... }
   m.progress("No answer", total: hosts.size, color: :red) { |bar| ... }
 end
 ```
 
-The headline bar keeps the configured colour. A finished job's row reads `[✓] fonts.zip 40/40 (0.1s)`, and the headline's `[✓] Downloading 240/240 (0.3s)`. It returns what each job returned, in declaration order, and takes `concurrent:` as `multi_spinner` does. Every `m.progress` needs a block and a non-negative Integer `total:`, or raises `ArgumentError`.
+The headline bar keeps the configured colour. A finished job's row reads `[✓] fonts.zip 40/40 (0.1s)`, and the headline's `[✓] Downloading 240/240 (0.3s)`. It returns what each job returned, in declaration order, and takes `concurrent:` as `multi_spinner` does. Every `m.progress` needs a block, and a `total:` that is nil or a non-negative Integer, or raises `ArgumentError`.
+
+A job that learns its size only as it runs declares `total: nil` and sets `bar.total =` once it knows. Until then its bar is empty and its count reads `12/?`.
+
+The headline bar adds up every job's bar. Two options change that:
+
+- `count: :jobs` counts the jobs that have ended, out of all of them, whatever each bar measures.
+- `total: n` sets the headline's total, for bars that overlap, such as two bars that each count some of the same hosts.
+
+```ruby
+ui.multi_progress("Downloading", concurrent: 2, count: :jobs) do |m|
+  files.each do |file|
+    m.progress(file.name, total: nil) do |bar|
+      bar.total = size_of(file)
+      download(file) { |bytes| bar.advance(bytes) }
+    end
+  end
+end
+```
+
+Piped, where `images.tar.gz` never learned its size:
+
+```text
+Downloading...
+  [✓] fonts.zip 40/40 (0.1s)
+  [✓] images.tar.gz 120/? (0.1s)
+  [✓] video.mp4 80/80 (0.1s)
+✓ Downloading 3/3 (0.1s)
+```
+
+Any other `count:`, or a `total:` that is not a non-negative Integer, raises `ArgumentError`.
 
 Piped:
 
@@ -384,21 +421,16 @@ end
 File.write("urls.txt", bodies.join("\n"))
 ```
 
-With `multi_progress`, each URL gets a bar that fills one byte at a time as the body arrives. A bar's `total` is fixed when it is declared, so a `HEAD` request asks each URL for its size first:
+With `multi_progress`, each URL gets a bar that fills as the body arrives, and the headline counts URLs. When a URL's turn comes, a `HEAD` request asks for its size, which becomes the bar's total:
 
 ```ruby
-found = urls.filter_map do |url|
-  [url, content_length(url)]
-rescue StandardError => e
-  ui.status "#{url}: #{e.message}", level: :warn
-  nil
-end
-
-bodies = ui.multi_progress("Fetching #{found.size} URLs", concurrent: 8) do |m|
-  found.each do |url, size|
-    m.progress(url, total: size || 1) do |bar|
-      body = download(url) { |bytes| bytes.times { bar.advance } if size }
-      bar.advance unless size # no Content-Length: done in one step
+bodies = ui.multi_progress("Fetching #{urls.size} URLs", concurrent: 8, count: :jobs) do |m|
+  urls.each do |url|
+    m.progress(url, total: nil) do |bar|
+      size = content_length(url)
+      bar.total = size if size
+      body = download(url) { |bytes| bar.advance(bytes) }
+      bar.total = bar.current unless size # no Content-Length: full once done
       body
     end
   end
@@ -434,7 +466,34 @@ def download(url)
 end
 ```
 
-In both, at most eight requests run at once and the rest wait as `[ ]` rows. The headline counts every URL, and in `multi_progress` every byte. A server that sends no `Content-Length` gets a bar of one unit, which sits at 0% and fills when its download ends. These helpers are kept short: a real one follows redirects, and sends `Accept-Encoding: identity` so the bytes counted match `Content-Length`. With more URLs than the screen has rows, each finished URL prints one line instead.
+In both, at most eight requests run at once, in the order of `urls`, and the rest wait as `[ ]` rows. A server that sends no `Content-Length` leaves its bar empty, counting `12/?`, until its download ends. These helpers are kept short: a real one follows redirects, sends `Accept-Encoding: identity` so the bytes counted match `Content-Length`, and writes each body to its file as it arrives rather than holding it in memory; `examples/bin/mycli download-urls` does all three. With more URLs than the screen has rows, only the URLs downloading are shown.
+
+### Stopping on Ctrl-C
+
+`ui.stoppable` runs its block with Ctrl-C asking for a stop instead of killing the command. Hand the `stop` it yields to `multi_spinner` or `multi_progress` as `stop:`: once Ctrl-C is pressed, the jobs running finish, no more start, and the command carries on to report what it did. A second Ctrl-C interrupts as usual.
+
+```ruby
+ui.stoppable do |stop|
+  files = ui.multi_spinner("Downloading #{urls.size} URLs", concurrent: 10, stop: stop) do |m|
+    urls.each { |url| m.spinner(url) { download(url) } }
+  end
+  next ui.success("Downloaded #{files.size} URLs") unless stop.stopped?
+
+  ui.info "Stopped", "Downloaded #{files.compact.size} of #{urls.size} URLs"
+end
+```
+
+While the running jobs finish, the headline reads `[⠋] Downloading 1628 URLs stopping`. Jobs that never started are marked skipped and return `nil`, and the headline ends skipped too, unless a job failed. Piped:
+
+```text
+Fetching...
+  [✓] fonts (0.1s)
+  [—] images
+  [—] video
+— Fetching (0.1s)
+```
+
+`stop.stopped?` says whether a stop was asked for, and `stop.stop!` asks for one from code, from any thread. `Dry::CLI::UI::Stop.new.trap(signal)` traps a signal other than `INT`. Your own worker threads can check `stop.stopped?` before taking the next item, as `examples/bin/mycli find-hosts` does. With `concurrent: true` every job has started already, so there is nothing left to skip.
 
 ### Task trees
 

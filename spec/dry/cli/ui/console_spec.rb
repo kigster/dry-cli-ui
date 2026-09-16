@@ -134,6 +134,18 @@ RSpec.describe Dry::CLI::UI::Console do
     it { expect { ui.multi_progress("Downloading") }.to raise_error(ArgumentError, /needs a block/) }
   end
 
+  describe "#stoppable" do
+    it { expect(ui.stoppable { |stop| stop }).to be_a(Dry::CLI::UI::Stop) }
+    it { expect { ui.stoppable }.to raise_error(ArgumentError, /needs a block/) }
+
+    it "hands the stop to the multi widgets" do
+      stop = Dry::CLI::UI::Stop.new.stop!
+      ui.multi_spinner("Fetching", concurrent: false, stop: stop) { |m| m.spinner("fonts") { :fonts } }
+      ui.multi_progress("Downloading", concurrent: false, stop: stop) { |m| m.progress("a", total: 1) { :a } }
+      expect(err.string).to include("  [—] fonts", "  [—] a 0/1")
+    end
+  end
+
   describe "#status_bar" do
     it { expect { ui.status_bar("deploy") }.to raise_error(ArgumentError, /needs a block/) }
 

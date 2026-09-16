@@ -158,13 +158,14 @@ module Dry
         # @param title [String] the headline
         # @param concurrent [Boolean, Integer] all at once (the default), one at
         #   a time, or at most this many at once
+        # @param stop [Stop, nil] once set, no more jobs start; see {#stoppable}
         # @yieldparam spinners [Widgets::MultiSpinner::Builder] declares each `spinner`
         # @return [Array<Object>] what each job returned, in declaration order
         # @raise [ArgumentError] without a block, or with an invalid concurrent
-        def multi_spinner(title, concurrent: true, &)
+        def multi_spinner(title, concurrent: true, stop: nil, &)
           raise ArgumentError, "multi_spinner needs a block" unless block_given?
 
-          Widgets::MultiSpinner.new(err, clock: clock, config: config).run(title, concurrent: concurrent, &)
+          Widgets::MultiSpinner.new(err, clock: clock, config: config).run(title, concurrent: concurrent, stop: stop, &)
         end
 
         # Runs a block with a progress bar showing percent, count and ETA.
@@ -197,13 +198,18 @@ module Dry
         # @param title [String] the headline
         # @param concurrent [Boolean, Integer] all at once (the default), one at
         #   a time, or at most this many at once
+        # @param count [Symbol] what the headline bar counts: `:units`, the sum
+        #   of every bar (the default), or `:jobs`, how many jobs have ended
+        # @param total [Integer, nil] the headline bar's total, when the jobs'
+        #   totals do not add up to it; nil to work it out
+        # @param stop [Stop, nil] once set, no more jobs start; see {#stoppable}
         # @yieldparam bars [Widgets::MultiProgress::Builder] declares each `progress`
         # @return [Array<Object>] what each job returned, in declaration order
-        # @raise [ArgumentError] without a block, or with an invalid concurrent
-        def multi_progress(title, concurrent: true, &)
+        # @raise [ArgumentError] without a block, or with an invalid concurrent, count or total
+        def multi_progress(title, concurrent: true, count: :units, total: nil, stop: nil, &)
           raise ArgumentError, "multi_progress needs a block" unless block_given?
 
-          Widgets::MultiProgress.new(err, clock: clock, config: config).run(title, concurrent: concurrent, &)
+          Widgets::MultiProgress.new(err, clock: clock, config: config).run(title, concurrent: concurrent, count: count, total: total, stop: stop, &)
         end
 
         # Declares a tree of tasks, then runs it, showing each task's state
@@ -254,6 +260,26 @@ module Dry
 
           others = out.animated? ? [out] : []
           StatusBar.new(err, others: others, title: title, hints: Array(hints), clock: clock, config: config).run(&)
+        end
+
+        # Runs the block with Ctrl-C asking for a stop instead of interrupting.
+        # Hand the stop to `multi_spinner` or `multi_progress` as `stop:`, and
+        # the jobs running finish while the rest are skipped. A second Ctrl-C
+        # interrupts as usual. See {Stop}.
+        #
+        # @example
+        #   ui.stoppable do |stop|
+        #     done = ui.multi_spinner("Fetching", concurrent: 4, stop: stop) { |m| ... }
+        #     ui.info "Stopped after #{done.compact.size}" if stop.stopped?
+        #   end
+        #
+        # @yieldparam stop [Stop]
+        # @return [Object] whatever the block returns
+        # @raise [ArgumentError] without a block
+        def stoppable(&)
+          raise ArgumentError, "stoppable needs a block" unless block_given?
+
+          Stop.new.trap(&)
         end
 
         # Prints a table to `out`.

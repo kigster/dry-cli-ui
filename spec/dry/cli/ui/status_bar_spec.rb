@@ -101,6 +101,12 @@ RSpec.describe Dry::CLI::UI::StatusBar do
         expect(plain(bar.line)).to start_with(" ⠋ deploy · Migrating users · 2 running · 1 done · 1 failed · [◼◼◼       ] 30%")
       end
 
+      it "counts progress without a total by what it did" do
+        bar.started(:a, "Uploading", progress: Dry::CLI::UI::Widgets::Progress::Handle.new(nil, nil).advance(4))
+        bar.started(:b, "Packing", progress: Dry::CLI::UI::Widgets::Progress::Handle.new(4, nil))
+        expect(plain(bar.line)).to include("[◼◼◼◼◼     ] 50%")
+      end
+
       it "keeps finished progress in the bar" do
         bar.started(:a, "Uploading", progress: Dry::CLI::UI::Widgets::Progress::Handle.new(4, nil).advance(4))
         bar.finished(:a, true)

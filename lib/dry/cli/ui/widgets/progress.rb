@@ -14,7 +14,7 @@ module Dry
         class Progress
           # What the block is given to report progress through.
           class Handle
-            # @param total [Integer]
+            # @param total [Integer, nil] nil until the work finds out
             # @param bar [TTY::ProgressBar, nil]
             # @param color [Symbol, nil] see {Progress.color}
             def initialize(total, bar, color: nil)
@@ -24,7 +24,8 @@ module Dry
               @current = 0
             end
 
-            # @return [Integer] the number of units the operation has
+            # @return [Integer, nil] the number of units the operation has; nil
+            #   while it is not known
             attr_reader :total
 
             # @return [Symbol, nil] the Pastel style of the bar's finished part;
@@ -34,7 +35,18 @@ module Dry
             # @return [Integer] the number of units completed so far
             attr_reader :current
 
-            # Marks units as complete. Progress never passes {#total}.
+            # Sets the number of units once the work finds out, such as a download
+            # learning its size. {#current} is lowered to fit.
+            #
+            # @param value [Integer]
+            # @raise [ArgumentError] when value is not a non-negative Integer
+            def total=(value)
+              @total = Progress.total(value)
+              self.current = current.clamp(0, value)
+              bar&.update(total: value)
+            end
+
+            # Marks units as complete. Progress never passes {#total} once it is known.
             #
             # @param step [Integer]
             # @return [self]
@@ -57,6 +69,17 @@ module Dry
 
           # Narrowest bar drawn.
           MIN_BAR = 10
+
+          # Checks a bar's total.
+          #
+          # @param value [Integer]
+          # @return [Integer] the value
+          # @raise [ArgumentError] for anything but a non-negative Integer
+          def self.total(value)
+            return value if value.is_a?(Integer) && value >= 0
+
+            raise ArgumentError, "total must be a non-negative Integer, got #{value.inspect}"
+          end
 
           # Checks a bar's own colour.
           #
@@ -119,8 +142,7 @@ module Dry
           # @raise [ArgumentError] when total is not a non-negative Integer, or
           #   color is not a Pastel style
           def run(label, total:, color: nil)
-            raise ArgumentError, "total must be a non-negative Integer, got #{total.inspect}" unless total.is_a?(Integer) && total >= 0
-
+            Progress.total(total)
             Progress.color(color)
             started = clock.call
             bar = start(label, total, color)
@@ -134,7 +156,7 @@ module Dry
             if handle
               bar&.stop
               terminal.finished(handle, ok)
-              summary = "#{label} #{handle.current}/#{total}"
+              summary = "#{label} #{handle.current}/#{handle.total}"
               terminal.puts(Outcome.line(terminal, ok ? :done : :failed, summary, clock.call - started))
             end
           end

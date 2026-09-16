@@ -28,6 +28,23 @@ module Foo
         end
       end
 
+      # Adds -c/--concurrency, how many items a command works on at once.
+      module Concurrency
+        DEFAULT = 10
+        MAX = 100
+
+        def self.included(command)
+          command.option :concurrency, aliases: ["-c"], type: :integer, default: DEFAULT, desc: "How many at once, from 1 to #{MAX}"
+        end
+
+        private
+
+        # @return [Integer, nil] the value as an Integer; nil when out of range
+        def concurrency(value)
+          Integer(value, exception: false)&.then { |count| count if count.between?(1, MAX) }
+        end
+      end
+
       # Used by download-urls: follows up to REDIRECTS redirects on every
       # request, and asks for the body as it is stored, so the bytes counted
       # match Content-Length.
@@ -52,28 +69,24 @@ module Foo
           [uri, response.content_length]
         end
 
-        # @yieldparam bytes [Integer] the size of each chunk as it arrives
-        # @return [Array(String, String, nil)] the body, and its media type when the server says
+        # @yieldparam response [Net::HTTPSuccess] the response, whose body is
+        #   read in the block
+        # @return [Object] what the block returned
         # @raise [RuntimeError] for a response that is not a success
-        def download(uri, hops = REDIRECTS, &)
-          body = +""
-          type = nil
+        def get(uri, hops = REDIRECTS, &)
+          result = nil
           location = nil
           start(uri) do |http|
             http.request_get(uri.request_uri, HEADERS) do |response|
               next location = redirect(uri, response, hops) if response.is_a?(Net::HTTPRedirection)
               raise "HTTP #{response.code}" unless response.is_a?(Net::HTTPSuccess)
 
-              type = response.content_type
-              response.read_body do |chunk|
-                body << chunk
-                yield chunk.bytesize if block_given?
-              end
+              result = yield response
             end
           end
-          return download(URI(location), hops - 1, &) if location
+          return get(URI(location), hops - 1, &) if location
 
-          [body, type]
+          result
         end
 
         # @return [String] the absolute URL a redirect points to
@@ -90,7 +103,9 @@ module Foo
         end
       end
 
-      # Downloads URLs, each to its own file, under a spinner or a progress bar.
+      # Downloads URLs, each to its own file as its body arrives, at most
+      # --concurrency at once and in the order given, under a spinner or a
+      # progress bar.
       class DownloadUrls < Dry::CLI::Command
         include Dry::CLI::UI
 
@@ -116,21 +131,21 @@ module Foo
           "text/xml" => ".xml"
         }.freeze
 
-        # The most URLs downloaded at once.
-        CONCURRENCY = 10
-
         desc "Download URLs, each to its own file"
         argument :urls, type: :array, required: false, desc: "URLs to download, separated by spaces"
         option :'urls-file', aliases: ["-u"], desc: "A file with one URL per line; blank lines and # comments are skipped"
-        option :'save-to', default: ".", desc: "Directory to save the files in, created when missing"
-        option :progress, type: :flag, default: false, desc: "Show a progress bar per URL"
-        option :spinner, type: :flag, default: false, desc: "Show a spinner per URL; used when neither flag is given"
+        option :output, aliases: ["-o"], default: ".", desc: "A directory to save the files in, created when missing"
+        option :progress, aliases: ["-p"], type: :flag, default: true, desc: "Show a progress bar per URL"
+        option :spinner, aliases: ["-s"], type: :flag, default: false, desc: "Show a spinner per URL; used when neither flag is given"
+        include Concurrency
 
         def call(urls: [], progress: false, spinner: false, **options)
-          return ui.error("Pick one of --progress and --spinner, not both") if progress && spinner
+          progress = false if spinner
+          @concurrency = concurrency(options[:concurrency]) or
+            return ui.error("--concurrency must be from 1 to #{Concurrency::MAX}, got #{options[:concurrency]}")
 
           urls_file = options[:'urls-file']
-          save_to = options.fetch(:'save-to', ".")
+          save_to = options.fetch(:output, ".")
 
           begin
             urls += read_urls(urls_file) if urls_file
@@ -153,16 +168,18 @@ module Foo
             return ui.error("Cannot create #{save_to}", e.message)
           end
 
-          downloads = progress ? with_progress(urls) : with_spinner(urls)
-          files = urls.zip(downloads).filter_map do |url, (body, type)|
-            next unless body
-
-            File.join(save_to, filename(url, type)).tap { |file| File.write(file, body) }
+          # Ctrl-C lets the downloads running finish, and starts no more.
+          files = ui.stoppable do |stop|
+            @stop = stop
+            (progress ? with_progress(urls, save_to) : with_spinner(urls, save_to)).compact
           end
+          return ui.info("Stopped", "Downloaded #{files.size} of #{urls.size} URLs into #{save_to}") if @stop.stopped?
+
           ui.success "Wrote #{files.size} of #{urls.size} URLs", files.join("\n")
         end
 
         # An http or https URL with a host.
+
         def valid?(url)
           uri = URI.parse(url)
           uri.is_a?(URI::HTTP) && !uri.host.to_s.empty?
@@ -170,14 +187,15 @@ module Foo
           false
         end
 
-        def with_spinner(urls)
-          ui.multi_spinner("Downloading #{urls.size} URLs", concurrent: CONCURRENCY) do |m|
+        # A spinner per URL; a URL that fails is marked failed.
+        #
+        # @return [Array<String, nil>] the file written for each URL
+        def with_spinner(urls, save_to)
+          ui.multi_spinner("Downloading #{urls.size} URLs", concurrent: @concurrency, stop: @stop) do |m|
             urls.each do |url|
               m.spinner(url) do |line|
-                line.detail = "resolving"
-                uri, = HTTP.resolve(url)
-                line.detail = "downloading #{uri.host}"
-                HTTP.download(uri)
+                received = 0
+                save(url, URI(url), save_to) { |bytes| line.detail = "#{received += bytes} bytes" }
               rescue StandardError => e
                 line.fail(e.message)
                 nil
@@ -186,36 +204,53 @@ module Foo
           end
         end
 
-        # A bar's total is fixed when it is declared, so ask each URL for its
-        # size first, with a HEAD request. A URL that fails here is left out.
-        def with_progress(urls)
-          found = urls.to_h do |url|
-            [url, HTTP.resolve(url)]
-          rescue StandardError => e
-            ui.status "#{url}: #{e.message}", level: :warn
-            [url, nil]
-          end
-          ready = found.select { |_, (uri, _)| uri }
-          return urls.map { nil } if ready.empty?
-
+        # A bar per URL, and a headline bar counting the URLs done. When a
+        # URL's turn comes, a HEAD request finds its size for the bar's total,
+        # then the file is downloaded.
+        #
+        # @return [Array<String, nil>] the file written for each URL
+        def with_progress(urls, save_to)
           # A bar cannot be marked failed, so a download that fails is
           # reported once every bar has finished.
           errors = Concurrent::Array.new
-          bodies = ui.multi_progress("Downloading #{ready.size} URLs", concurrent: CONCURRENCY) do |m|
-            ready.each do |url, (uri, size)|
-              m.progress(url, total: size || 1) do |bar|
-                download = HTTP.download(uri) { |bytes| bar.advance(bytes) if size }
-                bar.advance unless size # no Content-Length: done in one step
-                download
+          files = ui.multi_progress("Downloading #{urls.size} URLs", concurrent: @concurrency, count: :jobs, stop: @stop) do |m|
+            urls.each do |url|
+              m.progress(url, total: nil) do |bar|
+                uri, size = HTTP.resolve(url)
+                bar.total = size if size
+                save(url, uri, save_to) { |bytes| bar.advance(bytes) }.tap { bar.total = bar.current unless size }
               rescue StandardError => e
                 errors << "#{url}: #{e.message}"
                 nil
               end
             end
           end
-          errors.each { |error| ui.status error, level: :warn }
-          downloads = ready.keys.zip(bodies).to_h
-          urls.map { |url| downloads[url] }
+          ui.warn "#{errors.size} URLs failed", errors.join("\n") if errors.any?
+          files
+        end
+
+        # Downloads a URL straight into its file, removing what was written
+        # when the download fails.
+        #
+        # @param url [String] what the file is named after
+        # @param uri [URI] where to download it from
+        # @yieldparam bytes [Integer] the size of each chunk as it is written
+        # @return [String] the file written
+        def save(url, uri, save_to)
+          file = nil
+          HTTP.get(uri) do |response|
+            file = File.join(save_to, filename(url, response.content_type))
+            File.open(file, "wb") do |io|
+              response.read_body do |chunk|
+                io.write(chunk)
+                yield chunk.bytesize
+              end
+            end
+          end
+          file
+        rescue StandardError
+          FileUtils.rm_f(file) if file
+          raise
         end
 
         def read_urls(file)
@@ -243,19 +278,19 @@ module Foo
         # RDP, and the two AirPlay and Synology use.
         COMMON_PORTS = [22, 53, 80, 123, 139, 443, 445, 631, 3389, 5000, 7000].freeze
 
-        # How many addresses are probed at once. Each probes its ports all at
-        # once, so this keeps open sockets well under the default limit of 256.
-        CONCURRENCY = 10
-
         desc "Find hosts on the local network that answer on TCP ports"
         option :port, type: :integer, desc: "Probe only this TCP port, instead of #{COMMON_PORTS.join(', ')}"
         option :timeout, type: :float, default: 0.5, aliases: ["-t"], desc: "Seconds to wait for each port"
         option :output, aliases: ["-o"], desc: "Also write the hosts to this file"
-        option :progress, type: :flag, default: false, aliases: ["-p"], desc: "Show progress bars; the default with --port"
-        option :spinner, type: :flag, default: false, aliases: ["-s"], desc: "Show spinners; the default without --port"
+        option :progress, aliases: ["-p"], type: :flag, default: true, desc: "Show progress bars"
+        option :spinner, aliases: ["-s"], type: :flag, default: false, desc: "Show spinners"
+        include Concurrency
 
-        def call(timeout:, port: nil, output: nil, progress: false, spinner: false, **)
-          return ui.error("Pick one of --progress and --spinner, not both") if progress && spinner
+        def call(timeout:, port: nil, output: nil, progress: false, spinner: false, concurrency: Concurrency::DEFAULT, **)
+          progress = false if spinner
+          @concurrency = concurrency(concurrency) or return ui.error("--concurrency must be from 1 to #{Concurrency::MAX}, got #{concurrency}")
+
+          open_files_for(@concurrency * COMMON_PORTS.size)
 
           ip = local_ip or return ui.error("No local IPv4 address found")
           subnet = ip.split(".").first(3).join(".")
@@ -264,16 +299,35 @@ module Foo
           ui.info "Local IP: #{ip}, scanning #{subnet}.1-254 on #{ports.size == 1 ? 'port' : 'ports'} #{ports.join(', ')}"
 
           progress ||= port && !spinner
-          results = progress ? with_progress(ips, ports, timeout.to_f) : with_spinner(ips, ports, timeout.to_f)
+          @scanned = Concurrent::AtomicFixnum.new
+          # Ctrl-C lets the addresses being probed finish, and probes no more.
+          results = ui.stoppable do |stop|
+            @stop = stop
+            progress ? with_progress(ips, ports, timeout.to_f) : with_spinner(ips, ports, timeout.to_f)
+          end
           hosts = ips.zip(results).select { |_, open| open }
+          lines = hosts.map { |host, open| "#{host}: #{open.empty? ? 'no open ports' : open.join(', ')}" }
+          File.write(output, lines.join("\n") << "\n") if output && hosts.any?
+          if @stop.stopped?
+            return ui.info("Stopped", "Scanned #{@scanned.value} of #{ips.size} addresses, and found #{hosts.size} hosts", *lines)
+          end
           return ui.warn("No hosts answered on #{ports.join(', ')}") if hosts.empty?
 
-          lines = hosts.map { |host, open| "#{host}: #{open.empty? ? 'no open ports' : open.join(', ')}" }
-          File.write(output, lines.join("\n") << "\n") if output
           ui.success "Found #{hosts.size} hosts", lines.join("\n"), *("Written to #{output}" if output)
         end
 
         private
+
+        # Each address probes its ports all at once, so raise the open file limit
+        # when the default, often 256, is too low; a probe that cannot open a
+        # socket would read as no answer.
+        def open_files_for(sockets)
+          soft, hard = Process.getrlimit(:NOFILE)
+          wanted = sockets + 64
+          Process.setrlimit(:NOFILE, [wanted, hard].min, hard) if soft < wanted
+        rescue SystemCallError
+          nil
+        end
 
         def local_ip
           Socket.getifaddrs
@@ -285,7 +339,7 @@ module Foo
         # A spinner per address, counting the ports answered so far. An
         # address where nothing answered is marked failed.
         def with_spinner(ips, ports, timeout)
-          ui.multi_spinner("Probing #{ips.size} addresses", concurrent: CONCURRENCY) do |m|
+          ui.multi_spinner("Probing #{ips.size} addresses", concurrent: @concurrency, stop: @stop) do |m|
             ips.each do |ip|
               m.spinner(ip) do |line|
                 answered = Concurrent::AtomicFixnum.new
@@ -306,7 +360,7 @@ module Foo
           silent_bar = Concurrent::Promises.resolvable_future
           scanned = Concurrent::Promises.resolvable_future
           results = nil
-          ui.multi_progress("Probing #{ips.size} addresses") do |m|
+          ui.multi_progress("Probing #{ips.size} addresses", total: ips.size) do |m|
             m.progress("Answered", total: ips.size, color: :green) do |answered|
               silent = silent_bar.value!
               results = in_parallel(ips) do |ip|
@@ -323,7 +377,7 @@ module Foo
           results
         end
 
-        # Runs the block for each item, at most CONCURRENCY at once.
+        # Runs the block for each item, at most --concurrency at once.
         #
         # @return [Array] what the block returned for each item, in order
         def in_parallel(items)
@@ -331,9 +385,9 @@ module Foo
           items.each_with_index { |item, index| queue << [item, index] }
           queue.close
           results = Array.new(items.size)
-          Array.new(CONCURRENCY) do
+          Array.new(@concurrency) do
             Thread.new do
-              while (pair = queue.pop)
+              while !@stop.stopped? && (pair = queue.pop)
                 item, index = pair
                 results[index] = yield item
               end
@@ -353,6 +407,7 @@ module Foo
               probe(ip, port, timeout).tap(&)
             end
           end.map(&:value)
+          @scanned.increment
           return if states.all?(:silent)
 
           ports.zip(states).filter_map { |port, state| port if state == :open }

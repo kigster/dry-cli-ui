@@ -32,20 +32,47 @@ module Dry
             # Declares a job with a progress bar of its own.
             #
             # @param label [String]
-            # @param total [Integer] units of work
+            # @param total [Integer, nil] units of work; nil when the job finds
+            #   out as it runs, and sets `total=` on its handle
             # @param color [Symbol, nil] the finished part's Pastel style; nil for
             #   {Configuration#bar_color}
             # @yieldparam progress [Progress::Handle] call `advance` as units complete
             # @return [self]
-            # @raise [ArgumentError] without a block, when total is not a
-            #   non-negative Integer, or when color is not a Pastel style
+            # @raise [ArgumentError] without a block, when total is neither nil
+            #   nor a non-negative Integer, or when color is not a Pastel style
             def progress(label, total:, color: nil, &work)
               raise ArgumentError, "progress #{label.inspect} needs a block" unless work
-              raise ArgumentError, "total must be a non-negative Integer, got #{total.inspect}" unless total.is_a?(Integer) && total >= 0
+
+              Progress.total(total) unless total.nil?
 
               @jobs << Multi::Job.new(label, work, Progress::Handle.new(total, nil, color: Progress.color(color)))
               self
             end
+          end
+
+          # What the headline bar can count.
+          COUNTS = %i[units jobs].freeze
+
+          # Declares the jobs with the block, then runs them.
+          #
+          # @param title [String] the headline above the jobs
+          # @param concurrent [Boolean, Integer] see {Multi#run}
+          # @param count [Symbol] what the headline bar counts: `:units`, the
+          #   sum of every bar, or `:jobs`, how many jobs have ended
+          # @param total [Integer, nil] the headline bar's total; nil for the
+          #   sum of every bar's, or the number of jobs when counting jobs
+          # @param stop [Stop, nil] see {Multi#run}
+          # @yieldparam builder [Builder] declares the jobs
+          # @return [Array<Object>] what each job returned, in declaration order
+          # @raise [ArgumentError] with an invalid concurrent, count or total
+          # @raise [Exception] the first error a job raised
+          def run(title, concurrent: true, count: :units, total: nil, stop: nil, &)
+            raise ArgumentError, "count must be one of #{COUNTS.inspect}, got #{count.inspect}" unless COUNTS.include?(count)
+
+            Progress.total(total) unless total.nil?
+            @count = count
+            @total = total
+            super(title, concurrent: concurrent, stop: stop, &)
           end
 
           private
@@ -63,7 +90,7 @@ module Dry
 
           # @param job [Job]
           # @return [String]
-          def summary(job) = "#{job.label} #{job.handle.current}/#{job.handle.total}"
+          def summary(job) = "#{job.label} #{job.handle.current}/#{job.handle.total || '?'}"
 
           # @param width [Integer]
           # @return [String]
@@ -74,25 +101,40 @@ module Dry
           # @return [String]
           def headline_summary = "#{title} #{current}/#{total}"
 
-          # @return [Integer] units completed across every job
-          def current = jobs.sum { |job| job.handle.current }
+          # @return [Integer] units completed across every job, or jobs ended
+          def current
+            return jobs.count(&:seconds) if @count == :jobs
 
-          # @return [Integer] units across every job
-          def total = jobs.sum { |job| job.handle.total }
+            jobs.sum { |job| job.handle.current }
+          end
+
+          # @return [Integer] the total given; or units across every job,
+          #   counting what a job without a total has done so far; or every job
+          def total
+            return @total if @total
+            return jobs.size if @count == :jobs
+
+            jobs.sum { |job| job.handle.total || job.handle.current }
+          end
 
           # `[◼◼◼   ] 48%  96/200  ETA 3.1s`, with the count right-aligned to
           # the widest any row can show, so every count ends in one column.
           #
+          # A bar whose total is not known yet is drawn empty, counting `12/?`.
+          #
           # @param done [Integer]
-          # @param all [Integer]
+          # @param all [Integer, nil]
           # @param since [Float, nil] when the work started, by the clock
           # @param color [Symbol, nil] the bar's own colour, if any
           # @return [String]
           def meter(done, all, since, color = nil)
-            ratio = all.zero? ? 1.0 : done.fdiv(all)
+            ratio = if all.nil? then 0.0
+                    elsif all.zero? then 1.0
+                    else done.fdiv(all)
+                    end
             bar = Progress.bar(terminal.pastel, config, ratio, bar_columns, color: color)
             format("%<bar>s %<percent>3d%%  %<count>s  ETA %<eta>s",
-                   bar: bar, percent: (ratio * 100).floor, count: "#{done}/#{all}".rjust(count_width), eta: eta(done, all, since))
+                   bar: bar, percent: (ratio * 100).floor, count: "#{done}/#{all || '?'}".rjust(count_width), eta: eta(done, all, since))
           end
 
           # The widest count any row shows: the headline's, once every job is done.
@@ -108,11 +150,12 @@ module Dry
           end
 
           # @param done [Integer]
-          # @param all [Integer]
+          # @param all [Integer, nil]
           # @param since [Float, nil]
-          # @return [String] the time left at the rate so far, or `--` before any progress
+          # @return [String] the time left at the rate so far, or `--` before
+          #   any progress or while the total is not known
           def eta(done, all, since)
-            return "--" if since.nil? || done.zero?
+            return "--" if since.nil? || done.zero? || all.nil?
 
             Duration.format((clock.call - since) / done * (all - done))
           end

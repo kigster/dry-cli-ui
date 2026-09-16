@@ -36,6 +36,29 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiProgress do
       expect(io.string).to include("  [𝘅] a.zip 1/3").and end_with("𝘅 Downloading 1/3 (1.5s)\n")
     end
 
+    it "counts a job without a total by what it did" do
+      multi.run("Downloading") { |m| m.progress("a.zip", total: nil) { |bar| bar.advance(4) } }
+      expect(io.string).to include("  [✓] a.zip 4/? (0.5s)").and end_with("✓ Downloading 4/4 (1.5s)\n")
+    end
+
+    it "starts no more jobs once a stop is asked for" do
+      stop = Dry::CLI::UI::Stop.new
+      expect(multi.run("Downloading", concurrent: false, stop: stop) { |m| 2.times { m.progress("a", total: 1) { stop.stop! && :a } } }).to eq([:a, nil])
+    end
+
+    it "counts the jobs that ended, when asked" do
+      multi.run("Downloading", count: :jobs, &download)
+      expect(io.string).to end_with("✓ Downloading 2/2 (2.5s)\n")
+    end
+
+    it "takes the headline's total when given" do
+      multi.run("Downloading", total: 3, &download)
+      expect(io.string).to end_with("✓ Downloading 4/3 (2.5s)\n")
+    end
+
+    it { expect { multi.run("Downloading", count: :bytes, &download) }.to raise_error(ArgumentError, /count must be one of/) }
+    it { expect { multi.run("Downloading", total: -1, &download) }.to raise_error(ArgumentError, /non-negative Integer/) }
+
     it "rejects a total that is not a count" do
       expect { multi.run("Downloading") { |m| m.progress("a.zip", total: -1) { nil } } }
         .to raise_error(ArgumentError, /non-negative Integer/)
@@ -94,6 +117,19 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiProgress do
       end
       bars = plain(io.string).lines.grep(/ETA/).map { |line| [line.rindex("["), line.rindex("]")] }
       expect(bars.uniq.size).to eq(1)
+    end
+
+    it "draws an empty bar and no ETA until a job learns its total" do
+      multi.run("Downloading") do |m|
+        m.progress("a.zip", total: nil) do |bar|
+          bar.advance(2)
+          sleep(0.15)
+          bar.total = 4
+          bar.advance(2)
+          sleep(0.15)
+        end
+      end
+      expect(plain(io.string)).to match(%r{a\.zip +\[ +\]   0%  2/\?  ETA --}).and include("[✓] a.zip 4/4")
     end
 
     it "draws a full bar for a job with nothing to do" do

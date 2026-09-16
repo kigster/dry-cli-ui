@@ -284,7 +284,7 @@ module Dry
         # @return [String, nil] a bar over every progress reported so far
         def meter
           progress = @finished + @running.values.filter_map(&:last)
-          total = progress.sum(&:total)
+          total = progress.sum { |item| item.total || item.current }
           return if total.zero?
 
           ratio = progress.sum(&:current).fdiv(total)

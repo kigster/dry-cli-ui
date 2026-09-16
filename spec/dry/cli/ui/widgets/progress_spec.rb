@@ -104,5 +104,36 @@ RSpec.describe Dry::CLI::UI::Widgets::Progress do
     it { expect(handle.advance(2).current).to eq(2) }
     it { expect(handle.advance(10).current).to eq(3) }
     it { expect(handle.advance(-5).current).to eq(0) }
+
+    context "with a total set later" do
+      before { handle.advance(3).total = 2 }
+
+      its(:total) { is_expected.to eq(2) }
+      its(:current) { is_expected.to eq(2) }
+    end
+
+    context "without a total" do
+      subject(:handle) { described_class.new(nil, nil) }
+
+      its(:total) { is_expected.to be_nil }
+      it { expect(handle.advance(500).current).to eq(500) }
+    end
+
+    context "with a bar" do
+      subject(:handle) { described_class.new(nil, bar) }
+
+      let(:bar) { instance_double(TTY::ProgressBar, update: nil) }
+
+      before { handle.total = 9 }
+
+      it { expect(bar).to have_received(:update).with(total: 9) }
+    end
+
+    it { expect { handle.total = nil }.to raise_error(ArgumentError, /non-negative Integer, got nil/) }
+  end
+
+  describe ".total" do
+    it { expect(described_class.total(0)).to eq(0) }
+    it { expect { described_class.total(-1) }.to raise_error(ArgumentError, /non-negative Integer/) }
   end
 end
