@@ -65,10 +65,93 @@ RSpec.describe Dry::CLI::UI do
       let(:out) { StringIO.new }
       let(:err) { StringIO.new }
 
-      before { Dry::CLI.new(command).call(arguments: [], out: out, err: err) }
+      before { Dry::CLI.new(command).call(arguments: [], stdout: out, stderr: err) }
 
       it { expect(out.string).to include("Success", "all good").and exclude("oh no") }
       it { expect(err.string).to include("Error", "oh no").and exclude("all good") }
+    end
+
+    context "in a dry-cli command reading a prompt's answer" do
+      let(:command) do
+        Class.new(Dry::CLI::Command) do
+          include Dry::CLI::UI
+
+          def call(**) = ui.info(ui.prompt("Name?"))
+        end
+      end
+      let(:out) { StringIO.new }
+
+      before do
+        Dry::CLI.new(command).call(arguments: [], stdin: StringIO.new("Ada\n"), stdout: out, stderr: StringIO.new)
+      end
+
+      it { expect(plain(out.string)).to include("Ada") }
+    end
+
+    context "in a dry-cli command registered as an instance, called twice" do
+      let(:instance) do
+        Class.new(Dry::CLI::Command) do
+          include Dry::CLI::UI
+
+          def call(**) = ui.info("hello")
+        end.new
+      end
+      let(:outputs) { [StringIO.new, StringIO.new] }
+
+      before do
+        outputs.each { |io| Dry::CLI.new(instance).call(arguments: [], stdout: io, stderr: StringIO.new) }
+      end
+
+      it "writes each call to that call's stream" do
+        expect(outputs.map { plain(_1.string) }).to all(include("hello"))
+      end
+    end
+
+    context "in a dry-cli command run in-process by a launcher" do
+      let(:launcher) do
+        Dry::CLI::Launcher[
+          Class.new(Dry::CLI::Command) do
+            include Dry::CLI::UI
+
+            def call(**)
+              ui.success "done"
+              ui.warn "careful"
+            end
+          end
+        ]
+      end
+      let(:out) { StringIO.new }
+      let(:err) { StringIO.new }
+      let(:kernel) { Class.new { attr_reader :status; def exit(status) = @status = status }.new }
+
+      before { launcher.new([], StringIO.new, out, err, kernel).execute! }
+
+      it { expect(plain(out.string)).to include("done") }
+      it { expect(plain(err.string)).to include("careful") }
+      it { expect(kernel.status).to eq(0) }
+    end
+
+    context "in a command with options of its own" do
+      subject(:command) do
+        Class.new(Dry::CLI::Command) do
+          include Dry::CLI::UI
+
+          private def ui_options = { box_width: 30 }
+        end.new(stdout: StringIO.new)
+      end
+
+      it { expect(command.ui.send(:box_width)).to eq(30) }
+    end
+
+    context "when a dry-cli command's own streams render dry-cli styles" do
+      subject(:command) { Class.new(Dry::CLI::Command) { include Dry::CLI::UI }.new(stdout: io) }
+
+      let(:io) { StringIO.new }
+
+      it "writes to the IO beneath them" do
+        command.ui.info("hello")
+        expect(io.string).to include("hello")
+      end
     end
 
     context "in a plain object" do
@@ -76,6 +159,15 @@ RSpec.describe Dry::CLI::UI do
 
       its(:ui) { is_expected.to be_a(Dry::CLI::UI::Console) }
       it { expect(host.ui).to be(host.ui) }
+
+      it "builds a new console when $stdout changes" do
+        first = host.ui
+        original = $stdout
+        $stdout = StringIO.new
+        expect(host.ui).not_to be(first)
+      ensure
+        $stdout = original
+      end
 
       it "writes to $stdout" do
         expect { host.ui.info("hello") }.to output(/hello/).to_stdout

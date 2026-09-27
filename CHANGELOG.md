@@ -1,6 +1,15 @@
-## [0.6.0]
+## [0.6.1]
 
 - `m.spinner(label)` inside `ui.multi_progress` declares a row with a spinner in place of a bar, for a phase whose size is never known, so one widget can show phases of known and unknown size together. The row shows its `Line`'s detail while it runs and ends `[✓] label`; it counts as a job and as no units on the headline.
+
+## [0.6.0]
+
+- `ui` reads the command's public `stdout`, `stderr` and `stdin`, the streams dry-cli was called with. Before, it looked for `out` and `err`, which dry-cli no longer has, and wrote to `$stdout` and `$stderr` instead. Prompts now read from the command's `stdin`.
+- `ui` builds its console again when those streams change, so a command registered as an instance, or run in-process by `Dry::CLI::Launcher`, writes each call to that call's streams.
+- `ui_options` configures the console `ui` builds, in place of overriding `ui`.
+- Needs dry-cli with public command streams and `Dry::CLI::Launcher`; the Gemfile takes it from kigster/dry-cli until it is released.
+
+> > > > > > > 33d8dfb (Present through the command's public streams)
 
 ## [0.5.1]
 

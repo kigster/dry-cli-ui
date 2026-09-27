@@ -11,6 +11,11 @@ module Dry
 
       def ui: () -> Console
 
+      private def ui_streams: () -> { out: untyped, err: untyped, input: untyped }
+      private def ui_options: () -> Hash[Symbol, untyped]
+
+      def self.raw: (untyped stream) -> untyped
+
       def self.configure: () { (Configuration config) -> void } -> Configuration
       def self.config: () -> Configuration
       def self.reset!: () -> void
