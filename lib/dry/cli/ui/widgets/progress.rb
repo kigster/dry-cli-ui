@@ -56,6 +56,33 @@ module Dry
               self
             end
 
+            # Ends the work as a failure when the block returns, without
+            # raising: for work that went on after some of its units failed.
+            #
+            # @param reason [#to_s, nil] said after the count, such as "2 failed"
+            # @return [self]
+            def fail(reason = nil)
+              @failed = true
+              @reason = reason&.to_s
+              self
+            end
+
+            # @return [Boolean] whether {#fail} was called
+            def failed? = @failed == true
+
+            # @return [String, nil] what {#fail} was given
+            attr_reader :reason
+
+            # The label and the count, with the failure's reason after it when
+            # there is one: `Extracting 1002/1002: 2 failed`.
+            #
+            # @param label [String]
+            # @return [String]
+            def summary(label)
+              count = "#{label} #{current}/#{total || '?'}"
+              failed? && !reason.to_s.empty? ? "#{count}: #{reason}" : count
+            end
+
             private
 
             # @return [TTY::ProgressBar, nil]
@@ -150,14 +177,13 @@ module Dry
             terminal.started(handle, label, progress: handle)
             ok = false
             result = yield handle
-            ok = true
+            ok = !handle.failed?
             result
           ensure
             if handle
               bar&.stop
               terminal.finished(handle, ok)
-              summary = "#{label} #{handle.current}/#{handle.total}"
-              terminal.puts(Outcome.line(terminal, ok ? :done : :failed, summary, clock.call - started))
+              terminal.puts(Outcome.line(terminal, ok ? :done : :failed, handle.summary(label), clock.call - started))
             end
           end
 

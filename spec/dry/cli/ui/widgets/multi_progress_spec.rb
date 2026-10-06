@@ -103,6 +103,15 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiProgress do
         expect(io.string).to include("  [𝘅] Indexing: disk full").and include("𝘅 Generating")
       end
 
+      it "marks a bar row failed with its reason, and runs the phases after it" do
+        multi.run("Generating", concurrent: false, count: :jobs) do |m|
+          m.progress("Extracting", total: 3) { |bar| bar.advance(3).fail("1 failed") }
+          m.spinner("Indexing") { :indexed }
+        end
+        expect(io.string).to include("  [𝘅] Extracting 3/3: 1 failed (0.5s)\n", "  [✓] Indexing (0.5s)\n")
+          .and end_with("𝘅 Generating 2/2 (2.5s)\n")
+      end
+
       it "rejects a spinner row without a block" do
         expect { multi.run("Generating") { |m| m.spinner("Indexing") } }.to raise_error(ArgumentError, /"Indexing" needs a block/)
       end

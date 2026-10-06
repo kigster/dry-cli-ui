@@ -1,5 +1,9 @@
 ## [0.6.1]
 
+- A progress handle takes `fail(reason = nil)`, as a `Line` does: the bar ends `𝘅 label 3/3: reason` without raising, in `ui.progress` and in a row of `ui.multi_progress`, where the jobs after it still run and the headline ends `𝘅`. For work that carries on after some of its units failed.
+
+## [0.6.0]
+
 - `m.spinner(label)` inside `ui.multi_progress` declares a row with a spinner in place of a bar, for a phase whose size is never known, so one widget can show phases of known and unknown size together. The row shows its `Line`'s detail while it runs and ends `[✓] label`; it counts as a job and as no units on the headline.
 
 ## [0.6.0]
@@ -8,8 +12,6 @@
 - `ui` builds its console again when those streams change, so a command registered as an instance, or run in-process by `Dry::CLI::Launcher`, writes each call to that call's streams.
 - `ui_options` configures the console `ui` builds, in place of overriding `ui`.
 - Needs dry-cli with public command streams and `Dry::CLI::Launcher`; the Gemfile takes it from kigster/dry-cli until it is released.
-
-> > > > > > > 33d8dfb (Present through the command's public streams)
 
 ## [0.5.1]
 
