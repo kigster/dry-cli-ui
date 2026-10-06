@@ -73,6 +73,40 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiProgress do
     it "rejects a job without a block" do
       expect { multi.run("Downloading") { |m| m.progress("a.zip", total: 1) } }.to raise_error(ArgumentError, /needs a block/)
     end
+
+    context "with spinner rows among the bars" do
+      let(:phases) do
+        lambda do |m|
+          m.spinner("Finding") { |line| (line.detail = "2025") && %w[a b] }
+          m.progress("Extracting", total: 2) { |bar| bar.advance(2) && :extracted }
+          m.spinner("Indexing", &-> { :indexed })
+        end
+      end
+
+      it "returns what each job returned, a spinner's as a bar's" do
+        expect(multi.run("Generating", concurrent: false, &phases)).to eq([%w[a b], :extracted, :indexed])
+      end
+
+      it "ends a spinner row with its label alone, and counts it as a job and as no units" do
+        multi.run("Generating", concurrent: false, &phases)
+        expect(io.string).to include("  [✓] Finding (0.5s)\n", "  [✓] Extracting 2/2 (0.5s)\n", "  [✓] Indexing (0.5s)\n")
+          .and end_with("✓ Generating 2/2 (3.5s)\n")
+      end
+
+      it "counts every row when counting jobs" do
+        multi.run("Generating", concurrent: false, count: :jobs, &phases)
+        expect(io.string).to end_with("✓ Generating 3/3 (3.5s)\n")
+      end
+
+      it "marks a spinner row failed, with its reason, when its line fails" do
+        multi.run("Generating") { |m| m.spinner("Indexing") { |line| line.fail("disk full") } }
+        expect(io.string).to include("  [𝘅] Indexing: disk full").and include("𝘅 Generating")
+      end
+
+      it "rejects a spinner row without a block" do
+        expect { multi.run("Generating") { |m| m.spinner("Indexing") } }.to raise_error(ArgumentError, /"Indexing" needs a block/)
+      end
+    end
   end
 
   context "on a terminal" do
@@ -130,6 +164,19 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiProgress do
         end
       end
       expect(plain(io.string)).to match(%r{a\.zip +\[ +\]   0%  2/\?  ETA --}).and include("[✓] a.zip 4/4")
+    end
+
+    it "turns a spinner row with its detail and no bar, beside a bar row" do
+      multi.run("Generating", concurrent: false, count: :jobs) do |m|
+        m.spinner("Finding") do |line|
+          line.detail = "2025/us"
+          sleep(0.15)
+        end
+        m.progress("Extracting", total: 2) { |bar| bar.advance && sleep(0.15) }
+      end
+      drawn = plain(io.string)
+      expect(drawn).to match(/\[⠙\] Finding 2025\/us\n/).and match(/Extracting +\[◼+ +\]  50%  1\/2  ETA/)
+      expect(drawn.lines.grep(/Finding/)).to all(satisfy { !it.include?("ETA") })
     end
 
     it "draws a full bar for a job with nothing to do" do

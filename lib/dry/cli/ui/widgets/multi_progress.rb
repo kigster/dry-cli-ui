@@ -11,6 +11,12 @@ module Dry
         # runs, and is replaced by `✓ label 120/120 (1.1s)` when it ends. The
         # bar's characters come from {Configuration#bar_format}.
         #
+        # A job declared with `spinner` instead has no bar: its row turns and
+        # shows its {Line}'s detail, as in {MultiSpinner}, and ends
+        # `✓ label (0.4s)`. It suits a phase whose size is never known, among
+        # phases whose size is. It counts as a job and as no units, so a
+        # headline over such rows reads best with `count: :jobs`.
+        #
         # @example
         #   ui.multi_progress("Downloading") do |m|
         #     files.each do |file|
@@ -18,6 +24,13 @@ module Dry
         #         download(file) { |bytes| bar.advance(bytes) }
         #       end
         #     end
+        #   end
+        #
+        # @example Phases, one at a time, some of known size
+        #   ui.multi_progress("Generating", concurrent: false, count: :jobs) do |m|
+        #     m.spinner("Finding") { |line| found = find { |dir| line.detail = dir } }
+        #     m.progress("Extracting", total: nil) { |bar| bar.total = found.size; found.each { extract(it) && bar.advance } }
+        #     m.spinner("Indexing") { index }
         #   end
         #
         # See {Multi} for how the jobs run and how the rows are drawn.
@@ -46,6 +59,20 @@ module Dry
               Progress.total(total) unless total.nil?
 
               @jobs << Multi::Job.new(label, work, Progress::Handle.new(total, nil, color: Progress.color(color)))
+              self
+            end
+
+            # Declares a job with a spinner in place of a bar, for work whose
+            # size is never known.
+            #
+            # @param label [String]
+            # @yieldparam line [Line] reports on the work while it runs
+            # @return [self]
+            # @raise [ArgumentError] without a block
+            def spinner(label, &work)
+              raise ArgumentError, "spinner #{label.inspect} needs a block" unless work
+
+              @jobs << Multi::Job.new(label, work, Line.new)
               self
             end
           end
@@ -78,19 +105,37 @@ module Dry
           private
 
           # @param job [Job]
-          # @return [Progress::Handle]
-          def progress_of(job) = job.handle
+          # @return [Boolean] whether the job was declared with `spinner`
+          def spinner?(job) = job.handle.is_a?(Line)
+
+          # @param job [Job]
+          # @return [Object]
+          def call(job) = spinner?(job) ? Line.call(job.work, job.handle) : super
+
+          # @param job [Job]
+          # @return [Boolean]
+          def reported_failure?(job) = spinner?(job) && job.handle.failed?
+
+          # @param job [Job]
+          # @return [Progress::Handle, nil] nil for a spinner, which has no progress
+          def progress_of(job) = spinner?(job) ? nil : job.handle
 
           # @param job [Job]
           # @param width [Integer]
           # @return [String]
           def running(job, width)
+            return [job.label, job.handle.detail].reject(&:empty?).join(" ") if spinner?(job)
+
             "#{job.label.ljust(width)} #{meter(job.handle.current, job.handle.total, job.started, job.handle.color)}"
           end
 
           # @param job [Job]
           # @return [String]
-          def summary(job) = "#{job.label} #{job.handle.current}/#{job.handle.total || '?'}"
+          def summary(job)
+            return job.handle.summary(job.label) if spinner?(job)
+
+            "#{job.label} #{job.handle.current}/#{job.handle.total || '?'}"
+          end
 
           # @param width [Integer]
           # @return [String]
@@ -105,7 +150,7 @@ module Dry
           def current
             return jobs.count(&:seconds) if @count == :jobs
 
-            jobs.sum { |job| job.handle.current }
+            bars.sum { |job| job.handle.current }
           end
 
           # @return [Integer] the total given; or units across every job,
@@ -114,8 +159,11 @@ module Dry
             return @total if @total
             return jobs.size if @count == :jobs
 
-            jobs.sum { |job| job.handle.total || job.handle.current }
+            bars.sum { |job| job.handle.total || job.handle.current }
           end
+
+          # @return [Array<Job>] the jobs that have a bar
+          def bars = jobs.reject { spinner?(it) }
 
           # `[◼◼◼   ] 48%  96/200  ETA 3.1s`, with the count right-aligned to
           # the widest any row can show, so every count ends in one column.
