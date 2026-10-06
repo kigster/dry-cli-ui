@@ -69,23 +69,65 @@ module Dry
         def reset!
           @config = nil
         end
+
+        # The IO beneath a dry-cli stream, or the stream itself when it is not one.
+        #
+        # Asks for the class rather than for `raw`, which `io/console` also defines on every IO, to
+        # put a terminal into raw mode.
+        #
+        # @param stream [IO, Dry::CLI::Stream]
+        # @return [IO]
+        def raw(stream)
+          defined?(Dry::CLI::Stream) && stream.is_a?(Dry::CLI::Stream) ? stream.raw : stream
+        end
       end
 
-      # The console this command presents through. Writes to the command's own
-      # `out` and `err` when dry-cli has set them, and to `$stdout` and
-      # `$stderr` otherwise.
+      # The console this command presents through.
       #
-      # Override it to configure the console:
+      # In a dry-cli command it writes to the command's own `stdout` and `stderr`, and reads prompt
+      # answers from its `stdin`: the streams the CLI was called with. Anywhere else it uses
+      # `$stdout`, `$stderr` and `$stdin`.
       #
-      # @example
-      #   def ui = @ui ||= Dry::CLI::UI::Console.new(box_width: 72)
+      # The console is built again whenever those streams change. A command registered as an
+      # instance is used for every call to its CLI, each time with that call's streams, as when a
+      # test suite runs the CLI in-process with a StringIO per test.
+      #
+      # Configure the console by overriding {#ui_options}.
       #
       # @return [Dry::CLI::UI::Console]
       def ui
-        @ui ||= Console.new(
-          out: (respond_to?(:out, true) && __send__(:out)) || $stdout,
-          err: (respond_to?(:err, true) && __send__(:err)) || $stderr
-        )
+        streams = ui_streams
+        @ui = nil unless @ui_streams && streams.all? { |name, io| @ui_streams[name].equal?(io) }
+        @ui_streams = streams
+        @ui ||= Console.new(**streams, **ui_options)
+      end
+
+      private
+
+      # The streams {#ui} presents through, as keywords for {Console#initialize}.
+      #
+      # A dry-cli command gives its own public `stdout`, `stderr` and `stdin`. Its output streams
+      # render dry-cli's own styles; the console writes to the IO beneath them, since it decides
+      # colour for itself.
+      #
+      # @return [Hash{Symbol => IO}] `out:`, `err:` and `input:`
+      def ui_streams
+        {
+          out: UI.raw(respond_to?(:stdout) ? stdout : $stdout),
+          err: UI.raw(respond_to?(:stderr) ? stderr : $stderr),
+          input: respond_to?(:stdin) ? stdin : $stdin
+        }
+      end
+
+      # Options for {Console#initialize} other than its streams. Override it to configure the
+      # console {#ui} builds.
+      #
+      # @example
+      #   def ui_options = { box_width: 72 }
+      #
+      # @return [Hash{Symbol => Object}]
+      def ui_options
+        {}
       end
     end
   end

@@ -86,7 +86,7 @@ class Import < ApplicationCommand
 end
 ```
 
-`ui` writes to the command's `out` and `err` when dry-cli has set them, and to `$stdout` and `$stderr` otherwise.
+`ui` writes to the command's `stdout` and `stderr`, and reads prompt answers from its `stdin`: the streams dry-cli was called with. Outside a dry-cli command it uses `$stdout`, `$stderr` and `$stdin`. The console is built again when those streams change, so a command registered as an instance writes each call to that call's streams.
 
 ### Without dry-cli
 
@@ -750,7 +750,7 @@ Errors raised inside a block are never swallowed: the widget marks itself failed
 | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `info`, `success`, `box`, `table`, `status` at those levels | `debug`, `warn`, `error`, `fatal`, `popup`, spinners, progress bars, their multi forms, task trees, the status bar, prompts |
 
-`mycli export > rules.csv` therefore writes only the command's results to the file, while its progress stays on the screen. `ui` writes to the streams dry-cli was called with, so `Dry::CLI.new(registry).call(out: io, err: io)` captures everything.
+`mycli export > rules.csv` therefore writes only the command's results to the file, while its progress stays on the screen. `ui` writes to the streams dry-cli was called with, so `Dry::CLI.new(registry).call(stdout: io, stderr: io)` captures everything.
 
 A stream that is not a terminal, or runs under `TERM=dumb`, gets no animation, no cursor movement and no escape codes. [`NO_COLOR`](https://no-color.org) turns colour off and leaves animation on.
 
@@ -805,20 +805,18 @@ end
 
 ### Console options
 
-Override `ui` to configure the console:
+Override `ui_options` to configure the console `ui` builds. The streams come from the command:
 
 ```ruby
 class ApplicationCommand < Dry::CLI::Command
   include Dry::CLI::UI
 
-  def ui
-    @ui ||= Dry::CLI::UI::Console.new(
-      out: out || $stdout,
-      err: err || $stderr,
+  private def ui_options
+    {
       box_width: 72,     # boxes are 72 columns rather than the whole terminal
       color: nil,        # true or false to override detection
       animate: nil       # true or false to override detection
-    )
+    }
   end
 end
 ```
@@ -862,7 +860,15 @@ err.string   # => "Loading...\n✓ Loading (0.0s)\nContinue? (y/N) "
 out.string   # => the Success box
 ```
 
-Through dry-cli, `Dry::CLI.new(registry).call(arguments: %w[import], out: out, err: err)` gives every command's `ui` those streams.
+Through dry-cli, `Dry::CLI.new(registry).call(arguments: %w[import], stdin: input, stdout: out, stderr: err)` gives every command's `ui` those streams.
+
+To run the whole CLI in the same process as its specs, as Aruba's in-process launcher does, bind a `Dry::CLI::Launcher` to it. Each run gets its own streams, and exits are recorded rather than ending the process:
+
+```ruby
+Launcher = Dry::CLI::Launcher[MyCLI::Commands]
+
+Launcher.new(%w[import], StringIO.new("y\n"), out, err, kernel).execute!
+```
 
 ## Relationship to dry-cli-help
 
