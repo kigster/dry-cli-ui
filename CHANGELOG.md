@@ -1,3 +1,7 @@
+## [0.6.0]
+
+- `m.spinner(label)` inside `ui.multi_progress` declares a row with a spinner in place of a bar, for a phase whose size is never known, so one widget can show phases of known and unknown size together. The row shows its `Line`'s detail while it runs and ends `[✓] label`; it counts as a job and as no units on the headline.
+
 ## [0.5.1]
 
 - `ui.stoppable { |stop| ... }` makes Ctrl-C ask for a stop instead of interrupting, and `ui.multi_spinner` and `ui.multi_progress` take `stop:`. Once it is set, the jobs running finish, the rest are skipped, and the headline says `stopping`, then ends skipped. A second Ctrl-C interrupts. `Dry::CLI::UI::Stop` is the object behind it.

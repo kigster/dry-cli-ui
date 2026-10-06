@@ -399,6 +399,31 @@ Downloading...
 
 Any other `count:`, or a `total:` that is not a non-negative Integer, raises `ArgumentError`.
 
+A phase whose size is never known goes on a row of its own with `m.spinner(label)`, beside the bars. Its row turns and shows the detail its `Line` is given, as in `multi_spinner`, with no bar, and it ends `[✓] label (0.1s)`, or `[𝘅] label: reason` after `line.fail`. It counts as a job and as no units, so `count: :jobs` suits a headline over phases run one at a time:
+
+```ruby
+ui.multi_progress("Generating text", concurrent: false, count: :jobs) do |m|
+  m.spinner("Finding PDFs") { |line| pdfs = find_pdfs { |dir| line.detail = dir } }
+  m.progress("Extracting", total: nil) do |bar|
+    bar.total = pdfs.size
+    pdfs.each { |pdf| extract(pdf) && bar.advance }
+  end
+  m.spinner("Indexing") { index }
+end
+```
+
+Piped:
+
+```text
+Generating text...
+  [✓] Finding PDFs (0.0s)
+  [✓] Extracting 3/3 (0.0s)
+  [✓] Indexing (0.0s)
+✓ Generating text 3/3 (0.0s)
+```
+
+`m.spinner` without a block raises `ArgumentError`.
+
 Piped:
 
 ```text
