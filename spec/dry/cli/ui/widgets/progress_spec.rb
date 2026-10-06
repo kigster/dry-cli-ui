@@ -27,6 +27,17 @@ RSpec.describe Dry::CLI::UI::Widgets::Progress do
       expect(io.string).to end_with("𝘅 Importing 1/3 (0.5s)\n")
     end
 
+    it "ends with a failure, the count and the reason, when the block fails its handle" do
+      result = progress.run("Copying", total: 3) { |bar| 3.times { bar.advance } && bar.fail("2 failed") && :copied }
+      expect(result).to eq(:copied)
+      expect(io.string).to eq("Copying...\n𝘅 Copying 3/3: 2 failed (0.5s)\n")
+    end
+
+    it "ends with a failure and the count alone when no reason is given" do
+      progress.run("Copying", total: 1) { |bar| bar.advance.fail }
+      expect(io.string).to end_with("𝘅 Copying 1/1 (0.5s)\n")
+    end
+
     it "rejects a colour Pastel does not know, before the block runs" do
       expect { progress.run("Importing", total: 1, color: :nope) { raise "ran" } }
         .to raise_error(ArgumentError, "color must be a Pastel style or nil, got :nope")

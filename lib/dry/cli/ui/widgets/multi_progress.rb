@@ -113,8 +113,8 @@ module Dry
           def call(job) = spinner?(job) ? Line.call(job.work, job.handle) : super
 
           # @param job [Job]
-          # @return [Boolean]
-          def reported_failure?(job) = spinner?(job) && job.handle.failed?
+          # @return [Boolean] whether its line or its bar was told to fail
+          def reported_failure?(job) = job.handle.failed?
 
           # @param job [Job]
           # @return [Progress::Handle, nil] nil for a spinner, which has no progress
@@ -131,11 +131,7 @@ module Dry
 
           # @param job [Job]
           # @return [String]
-          def summary(job)
-            return job.handle.summary(job.label) if spinner?(job)
-
-            "#{job.label} #{job.handle.current}/#{job.handle.total || '?'}"
-          end
+          def summary(job) = job.handle.summary(job.label)
 
           # @param width [Integer]
           # @return [String]

@@ -424,6 +424,30 @@ Generating text...
 
 `m.spinner` without a block raises `ArgumentError`.
 
+A job that carries on after some of its units failed ends its row with `bar.fail(reason)` rather than raising, so the jobs after it still run. Its row ends `[𝘅] label 3/3: reason`, the headline ends `𝘅`, and the call returns as usual. `ui.progress` takes the same `bar.fail`.
+
+```ruby
+ui.multi_progress("Generating text", concurrent: false, count: :jobs) do |m|
+  m.spinner("Finding PDFs") { pdfs = find_pdfs }
+  m.progress("Extracting", total: nil) do |bar|
+    bar.total = pdfs.size
+    failed = pdfs.count { |pdf| !extract(pdf).tap { bar.advance } }
+    bar.fail("#{failed} failed") if failed.positive?
+  end
+  m.spinner("Indexing") { index }
+end
+```
+
+Piped, with one PDF that would not extract:
+
+```text
+Generating text...
+  [✓] Finding PDFs (0.0s)
+  [𝘅] Extracting 3/3: 1 failed (0.0s)
+  [✓] Indexing (0.0s)
+𝘅 Generating text 3/3 (0.0s)
+```
+
 Piped:
 
 ```text
