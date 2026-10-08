@@ -5,6 +5,12 @@
 - `ui` builds its console again when those streams change, so a command registered as an instance, or run in-process by `Dry::CLI::Launcher`, writes each call to that call's streams.
 - `ui_options` configures the console `ui` builds, in place of overriding `ui`.
 - CI runs the suite against both kigster/dry-cli and the latest dry-cli release, and against the latest release every week.
+- Reserved flags: `extend Dry::CLI::UI::Flags` and `flags :dry_run, :yes, :output, :log` give a command `-n/--dry-run`, `-y/--yes`, `-o/--output [FILE]`, `-l/--log [FILE]`, `-L/--log-level LEVEL` and `--log-format FORMAT`, the same in every CLI. Loading `Flags` prepends a hook onto `Dry::CLI` that lets `-o` and `-l` go without a file, for those commands only; `Flags.arguments(argv)` is the rewrite on its own.
+- `ui.output(output) { |io| ... }` writes the command's report (what goes to `out`) to `log/<executable>-<action>.<YYYY-MM-DD>.<HHMMSS>.log` at the repository root for a bare `-o`, or to the file given, in colour, ending with the time it was closed. Spinners, bars and prompts stay on `err`.
+- `ui.logging(log, level:, format:) { ... }` logs through SemanticLogger to `log/<executable>-<action>.log`, a file, or `out` while the block runs. `ui.logger` is the command's logger, and `ui.log_exception(e)` logs an exception, with each frame's local variables when it was raised at `-L debug`. `ui.with_flags(**options) { |io| ... }` does both.
+- `ui.confirm` takes `yes:`, which answers it without asking, and on a terminal offers YES and NO as a list.
+- A stream answering `color?` with true gets colour although it is no TTY. `Terminal#inspect` leaves out the environment.
+- New dependencies: `semantic_logger`, `logger` (which semantic_logger needs on Ruby 4.0 and does not declare) and `binding_of_caller`. They load the first time a command logs.
 
 ## [0.6.1]
 
