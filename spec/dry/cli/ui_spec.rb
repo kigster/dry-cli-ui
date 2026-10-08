@@ -34,8 +34,9 @@ RSpec.describe Dry::CLI::UI do
     it "is what a console draws with unless it is given another" do
       described_class.configure { bar_format(complete: "#", incomplete: ".") }
       err = FakeTTY.new
+      console = Dry::CLI::UI::Console.new(err: err, env: {}, width: 60)
       allow(TTY::Screen).to receive(:height).and_return(24)
-      Dry::CLI::UI::Console.new(err: err, env: {}, width: 60).multi_progress("Go") do |m|
+      console.multi_progress("Go") do |m|
         m.progress("a", total: 2) { |bar| bar.advance && sleep(0.15) }
       end
       expect(plain(err.string)).to include("[#")
