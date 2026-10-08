@@ -88,6 +88,8 @@ end
 
 `ui` writes to the command's `stdout` and `stderr`, and reads prompt answers from its `stdin`: the streams dry-cli was called with. Outside a dry-cli command it uses `$stdout`, `$stderr` and `$stdin`. The console is built again when those streams change, so a command registered as an instance writes each call to that call's streams.
 
+Released dry-cli, up to 1.4, gives a command only `out` and `err`. There `ui` writes to those and reads prompt answers from `$stdin`; `Dry::CLI.new(registry).call(out: io, err: io)` still captures everything. `stdin:`, `stdout:`, `stderr:` and `Dry::CLI::Launcher` need dry-cli with public command streams ([dry-rb/dry-cli#175](https://github.com/dry-rb/dry-cli/pull/175) to [#176](https://github.com/dry-rb/dry-cli/pull/176)).
+
 ### Without dry-cli
 
 `Dry::CLI::UI::Console` needs nothing from dry-cli, so a Rake task or a plain script can use it directly:

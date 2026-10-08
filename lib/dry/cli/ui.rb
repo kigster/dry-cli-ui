@@ -85,8 +85,9 @@ module Dry
       # The console this command presents through.
       #
       # In a dry-cli command it writes to the command's own `stdout` and `stderr`, and reads prompt
-      # answers from its `stdin`: the streams the CLI was called with. Anywhere else it uses
-      # `$stdout`, `$stderr` and `$stdin`.
+      # answers from its `stdin`: the streams the CLI was called with. Under dry-cli 1.4 and
+      # earlier, which give a command only `out` and `err`, it writes to those and reads `$stdin`.
+      # Anywhere else it uses `$stdout`, `$stderr` and `$stdin`.
       #
       # The console is built again whenever those streams change. A command registered as an
       # instance is used for every call to its CLI, each time with that call's streams, as when a
@@ -113,10 +114,22 @@ module Dry
       # @return [Hash{Symbol => IO}] `out:`, `err:` and `input:`
       def ui_streams
         {
-          out: UI.raw(respond_to?(:stdout) ? stdout : $stdout),
-          err: UI.raw(respond_to?(:stderr) ? stderr : $stderr),
+          out: UI.raw(ui_stream(:stdout, :out) || $stdout),
+          err: UI.raw(ui_stream(:stderr, :err) || $stderr),
           input: respond_to?(:stdin) ? stdin : $stdin
         }
+      end
+
+      # One of the command's output streams: the public one, or the protected one dry-cli 1.4 and
+      # earlier set on a command it runs.
+      #
+      # @param name [Symbol] the public reader, `:stdout` or `:stderr`
+      # @param legacy_name [Symbol] the protected reader, `:out` or `:err`
+      # @return [IO, Dry::CLI::Stream, nil] nil when the command has neither, or was never run
+      def ui_stream(name, legacy_name)
+        return public_send(name) if respond_to?(name)
+
+        __send__(legacy_name) if respond_to?(legacy_name, true)
       end
 
       # Options for {Console#initialize} other than its streams. Override it to configure the
