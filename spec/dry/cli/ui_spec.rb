@@ -17,7 +17,22 @@ RSpec.describe Dry::CLI::UI do
     it "loads no TTY toolkit gem until the console is used" do
       expect(loaded).to eq("[]")
     end
+
+    context "with reserved flags declared" do
+      subject(:loaded) do
+        script = 'require "dry/cli"; require "dry-cli-ui"; ' \
+                 "Class.new(Dry::CLI::Command) { include Dry::CLI::UI; extend Dry::CLI::UI::Flags; flags :yes, :output, :log }; " \
+                 'print $LOADED_FEATURES.grep(%r{/(tty-\w+|pastel|semantic_logger|binding_of_caller)}).inspect'
+        Open3.capture2(RbConfig.ruby, "-I", File.join(PROJECT_ROOT, "lib"), "-e", script).first
+      end
+
+      it "loads neither SemanticLogger nor binding_of_caller until a command logs" do
+        expect(loaded).to eq("[]")
+      end
+    end
   end
+
+  it { expect(described_class.started_at).to be_a(Time).and be <= Time.now }
 
   describe ".configure" do
     it "yields the process-wide configuration and returns it" do

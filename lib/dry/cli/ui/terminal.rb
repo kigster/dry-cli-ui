@@ -99,6 +99,15 @@ module Dry
           (animated? || (io.respond_to?(:color?) && io.color?)) && env["NO_COLOR"].to_s.empty?
         end
 
+        # A terminal like this one, writing to another stream, and never animated: what a
+        # command's report goes to.
+        #
+        # @param io [IO]
+        # @return [Terminal]
+        def to(io)
+          Terminal.new(io, env: env, color: color, animate: false, width: @width)
+        end
+
         # Leaves out the environment, which can hold secrets, from what a debug log records.
         #
         # @return [String]

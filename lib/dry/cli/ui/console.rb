@@ -24,6 +24,8 @@ module Dry
       #   end
       #   ui.success "Imported #{rules.size} rules"
       class Console
+        include Reporting
+
         # @!method debug(*paragraphs, width: nil)
         #   A grey "Debug" box on `err`.
         #   @param paragraphs [Array<#to_s>] each one wrapped on its own, separated by a blank line
@@ -65,10 +67,12 @@ module Dry
         # @param box_width [Integer, nil] box width in columns; nil fills the terminal
         # @param clock [#call] returns monotonic seconds
         # @param config [Configuration] spinner and bar formats; {UI.config} by default
+        # @param invocation [Invocation, nil] names the report and log files; nil for the program alone
         def initialize(out: $stdout, err: $stderr, input: $stdin, env: ENV, color: nil, animate: nil,
-                       width: nil, box_width: nil, clock: Duration::CLOCK, config: UI.config)
+                       width: nil, box_width: nil, clock: Duration::CLOCK, config: UI.config, invocation: nil)
           @out = Terminal.new(out, env: env, color: color, animate: animate, width: width)
           @err = Terminal.new(err, env: env, color: color, animate: animate, width: width)
+          @invocation = invocation
           @input = input
           @box_width = box_width
           @clock = clock

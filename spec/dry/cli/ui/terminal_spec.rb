@@ -88,6 +88,30 @@ RSpec.describe Dry::CLI::UI::Terminal do
     it { is_expected.not_to be_color }
   end
 
+  describe "#to" do
+    subject(:other) { described_class.new(FakeTTY.new, env: env, color: color, animate: true, width: 50).to(report) }
+
+    let(:report) { Dry::CLI::UI::Report.new(StringIO.new) }
+    let(:color) { nil }
+
+    it { is_expected.not_to be_animated }
+    it { is_expected.to be_color }
+    its(:width) { is_expected.to eq(50) }
+    its(:io) { is_expected.to be(report) }
+
+    context "when colour is forced off" do
+      let(:color) { false }
+
+      it { is_expected.not_to be_color }
+    end
+
+    context "with NO_COLOR set" do
+      let(:env) { { "NO_COLOR" => "1" } }
+
+      it { is_expected.not_to be_color }
+    end
+  end
+
   describe "#inspect" do
     subject { described_class.new(StringIO.new, env: { "API_TOKEN" => "secret" }).inspect }
 
