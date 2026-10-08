@@ -95,6 +95,7 @@ module Dry
         def spinner: [T] (String label) { (Line line) -> T } -> T
         def multi_spinner: (String title, ?concurrent: (bool | Integer), ?stop: Stop?) { (untyped spinners) -> void } -> Array[untyped]
         def progress: [T] (String label, total: Integer, ?color: Symbol?) { (Widgets::Progress::Handle progress) -> T } -> T
+        def legend: (?failed: _ToS?, ?aux: _ToS?, ?ok: _ToS?) -> nil
         def multi_progress: (String title, ?concurrent: (bool | Integer), ?count: (:units | :jobs), ?total: Integer?, ?stop: Stop?) { (untyped bars) -> void } -> Array[untyped]
         def stoppable: [T] () { (Stop stop) -> T } -> T
         def status_bar: [T] (?String? title, ?hints: Array[String] | String) { () -> T } -> T
