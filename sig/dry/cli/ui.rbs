@@ -12,6 +12,7 @@ module Dry
       def ui: () -> Console
 
       private def ui_streams: () -> { out: untyped, err: untyped, input: untyped }
+      private def ui_stream: (Symbol name, Symbol legacy_name) -> untyped
       private def ui_options: () -> Hash[Symbol, untyped]
 
       def self.raw: (untyped stream) -> untyped

@@ -51,7 +51,7 @@ RSpec.describe Dry::CLI::UI do
   end
 
   describe "#ui" do
-    context "in a dry-cli command run with its own streams" do
+    context "in a dry-cli command run with its own streams", if: DRY_CLI_PUBLIC_STREAMS do
       let(:command) do
         Class.new(Dry::CLI::Command) do
           include Dry::CLI::UI
@@ -71,7 +71,7 @@ RSpec.describe Dry::CLI::UI do
       it { expect(err.string).to include("Error", "oh no").and exclude("all good") }
     end
 
-    context "in a dry-cli command reading a prompt's answer" do
+    context "in a dry-cli command reading a prompt's answer", if: DRY_CLI_PUBLIC_STREAMS do
       let(:command) do
         Class.new(Dry::CLI::Command) do
           include Dry::CLI::UI
@@ -88,7 +88,7 @@ RSpec.describe Dry::CLI::UI do
       it { expect(plain(out.string)).to include("Ada") }
     end
 
-    context "in a dry-cli command registered as an instance, called twice" do
+    context "in a dry-cli command registered as an instance, called twice", if: DRY_CLI_PUBLIC_STREAMS do
       let(:instance) do
         Class.new(Dry::CLI::Command) do
           include Dry::CLI::UI
@@ -107,7 +107,7 @@ RSpec.describe Dry::CLI::UI do
       end
     end
 
-    context "in a dry-cli command run in-process by a launcher" do
+    context "in a dry-cli command run in-process by a launcher", if: DRY_CLI_PUBLIC_STREAMS do
       let(:launcher) do
         Dry::CLI::Launcher[
           Class.new(Dry::CLI::Command) do
@@ -131,7 +131,7 @@ RSpec.describe Dry::CLI::UI do
       it { expect(kernel.status).to eq(0) }
     end
 
-    context "in a command with options of its own" do
+    context "in a command with options of its own", if: DRY_CLI_PUBLIC_STREAMS do
       subject(:command) do
         Class.new(Dry::CLI::Command) do
           include Dry::CLI::UI
@@ -143,7 +143,7 @@ RSpec.describe Dry::CLI::UI do
       it { expect(command.ui.send(:box_width)).to eq(30) }
     end
 
-    context "when a dry-cli command's own streams render dry-cli styles" do
+    context "when a dry-cli command's own streams render dry-cli styles", if: DRY_CLI_PUBLIC_STREAMS do
       subject(:command) { Class.new(Dry::CLI::Command) { include Dry::CLI::UI }.new(stdout: io) }
 
       let(:io) { StringIO.new }
@@ -151,6 +151,58 @@ RSpec.describe Dry::CLI::UI do
       it "writes to the IO beneath them" do
         command.ui.info("hello")
         expect(io.string).to include("hello")
+      end
+    end
+
+    context "in a dry-cli 1.4 command run with its own streams", unless: DRY_CLI_PUBLIC_STREAMS do
+      let(:command) do
+        Class.new(Dry::CLI::Command) do
+          include Dry::CLI::UI
+
+          def call(**)
+            ui.success "all good"
+            ui.error "oh no"
+          end
+        end
+      end
+      let(:out) { StringIO.new }
+      let(:err) { StringIO.new }
+
+      before { Dry::CLI.new(command).call(arguments: [], out: out, err: err) }
+
+      it { expect(out.string).to include("Success", "all good").and exclude("oh no") }
+      it { expect(err.string).to include("Error", "oh no").and exclude("all good") }
+    end
+
+    context "in an object with protected out and err, as dry-cli 1.4 gives a command" do
+      subject(:host) do
+        Class.new do
+          include Dry::CLI::UI
+
+          def initialize(out, err) = (@out, @err = out, err)
+
+          protected
+
+          attr_reader :out, :err
+        end.new(out, err)
+      end
+
+      let(:out) { StringIO.new }
+      let(:err) { StringIO.new }
+
+      it "writes results to out and diagnostics to err" do
+        host.ui.info("hello")
+        host.ui.warn("careful")
+        expect([plain(out.string), plain(err.string)]).to match([/hello/, /careful/])
+      end
+
+      context "before it was run" do
+        let(:out) { nil }
+        let(:err) { nil }
+
+        it "falls back to $stdout" do
+          expect { host.ui.info("hello") }.to output(/hello/).to_stdout
+        end
       end
     end
 
