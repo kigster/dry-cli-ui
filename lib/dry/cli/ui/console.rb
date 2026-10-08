@@ -188,6 +188,24 @@ module Dry
           Widgets::Progress.new(err, clock: clock, config: config).run(label, total: total, color: color, &)
         end
 
+        # Prints one line to `err` saying what each colour of a progress bar
+        # means, for a command to print before its first bar. Each label is
+        # optional; a label not given is left out. See {Widgets::Legend}.
+        #
+        # @example
+        #   ui.legend(failed: "errors and invalid files", aux: "relevant but auxiliary", ok: "forms")
+        #   # Color Mapping: [ red: errors and invalid files | yellow: relevant but auxiliary | green: forms ]
+        #
+        # @param failed [#to_s, nil] what the units counted `as: :failed` are
+        # @param aux [#to_s, nil] what the units counted `as: :aux` are
+        # @param ok [#to_s, nil] what the units counted `as: :ok` are
+        # @return [nil]
+        # @raise [ArgumentError] without any label
+        def legend(failed: nil, aux: nil, ok: nil) # rubocop:disable Naming/MethodParameterName
+          err.puts(Widgets::Legend.line(err, config, { failed: failed, aux: aux, ok: ok }))
+          nil
+        end
+
         # Runs several jobs at once, each with a progress bar of its own,
         # beneath a headline bar that counts them all. Each job is given a
         # {Widgets::Progress::Handle}. See {Widgets::MultiProgress}.

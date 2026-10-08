@@ -74,6 +74,39 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiProgress do
       expect { multi.run("Downloading") { |m| m.progress("a.zip", total: 1) } }.to raise_error(ArgumentError, /needs a block/)
     end
 
+    context "with units counted by outcome" do
+      let(:placing) do
+        lambda do |m|
+          m.progress("federal", total: 3) { |bar| bar.advance(2).advance(as: :failed) }
+          m.progress("states", total: 2) { |bar| bar.advance(as: :aux).advance(as: :failed) }
+        end
+      end
+
+      it "ends each row and the headline with a check mark and the breakdown" do
+        multi.run("Placing", concurrent: false, &placing)
+        expect(io.string).to eq(<<~TEXT)
+          Placing...
+            [✓] federal 3/3 (0.5s)  1 failed
+            [✓] states 2/2 (0.5s)  1 failed, 1 auxiliary
+          ✓ Placing 5/5 (2.5s)  2 failed, 1 auxiliary
+        TEXT
+      end
+
+      it "leaves the breakdown off a headline counting jobs" do
+        multi.run("Placing", concurrent: false, count: :jobs, &placing)
+        expect(io.string).to end_with("✓ Placing 2/2 (2.5s)\n")
+      end
+    end
+
+    it "fails a row with nothing to process, and the headline, and runs the rest" do
+      multi.run("Placing", concurrent: false) do |m|
+        m.progress("empty", total: 0) { nil }
+        m.progress("full", total: 1) { |bar| bar.advance && :full }
+      end
+      expect(io.string).to include("  [𝘅] empty 0/0: nothing to process (0.5s)\n", "  [✓] full 1/1 (0.5s)\n")
+        .and end_with("𝘅 Placing 1/1 (2.5s)\n")
+    end
+
     context "with spinner rows among the bars" do
       let(:phases) do
         lambda do |m|
@@ -202,6 +235,17 @@ RSpec.describe Dry::CLI::UI::Widgets::MultiProgress do
       rows = io.string.lines
       expect(rows.grep(/up .*ETA/).last).to include("\e[32m◼")
       expect(rows.grep(/down .*ETA/).last).to include("\e[31m◼")
+    end
+
+    it "draws each row's and the headline's failed and auxiliary cells first, and ends both with the breakdown" do
+      coloured = Dry::CLI::UI::Terminal.new(io, env: {}, width: 80, color: true)
+      described_class.new(coloured, clock: clock).run("Placing") do |m|
+        m.progress("forms", total: 4) { |bar| bar.advance(as: :failed).advance(as: :aux).advance && sleep(0.15) }
+      end
+      rows = io.string.lines
+      expect(rows.grep(/forms .*ETA/).last).to match(/\[\e\[31m◼\e\[0m(\e\[31m◼\e\[0m)*\e\[33m◼/)
+      expect(rows.grep(/Placing .*ETA/).last).to match(/\[\e\[31m◼\e\[0m(\e\[31m◼\e\[0m)*\e\[33m◼/)
+      expect(plain(io.string)).to match(/\[✓\] Placing 3\/4 \(\d+\.\ds\)  1 failed, 1 auxiliary\n└─ \[✓\] forms 3\/4 \(\d+\.\ds\)  1 failed, 1 auxiliary\n\z/)
     end
 
     it "takes the bar's characters from the configuration" do

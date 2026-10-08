@@ -171,6 +171,17 @@ module Dry
           # @return [String]
           def summary(job) = job.label
 
+          # What a job's row says after its elapsed time once it has ended.
+          #
+          # @param job [Job]
+          # @return [String, nil]
+          def note(_job) = nil
+
+          # What the headline says after its elapsed time once every job has ended.
+          #
+          # @return [String, nil]
+          def headline_note = nil
+
           # What follows the headline's glyph while jobs run.
           #
           # @param width [Integer] the columns the title is padded to
@@ -221,7 +232,7 @@ module Dry
             lock.synchronize do
               self.state = outcome
               @seconds = clock.call - started
-              live? ? redraw : terminal.puts(Outcome.line(terminal, state, headline_summary, @seconds))
+              live? ? redraw : terminal.puts(Outcome.line(terminal, state, headline_summary, @seconds, note: headline_note))
             end
           end
 
@@ -318,7 +329,7 @@ module Dry
             return "#{glyph(state)} #{running_headline(width)}#{stopping}" if state == :running
 
             elapsed = " #{terminal.pastel.bright_black("(#{Duration.format(@seconds)})")}"
-            "#{glyph(state)} #{headline_summary}#{elapsed}"
+            "#{glyph(state)} #{headline_summary}#{elapsed}#{noted(headline_note)}"
           end
 
           # @return [String] ` stopping` once a stop is asked for, or nothing
@@ -331,8 +342,14 @@ module Dry
             return "#{glyph(:running)} #{running(job, width)}" if job.state == :running
 
             elapsed = " #{terminal.pastel.bright_black("(#{Duration.format(job.seconds)})")}" if job.seconds
-            "#{glyph(job.state)} #{job.state == :pending ? job.label : summary(job)}#{elapsed}"
+            return "#{glyph(job.state)} #{job.label}" if job.state == :pending
+
+            "#{glyph(job.state)} #{summary(job)}#{elapsed}#{noted(note(job))}"
           end
+
+          # @param text [String, nil]
+          # @return [String] the note, two spaces after what it follows; or nothing
+          def noted(text) = text ? "  #{text}" : ""
 
           # A state's marker, `[✓]`; a turning spinner, `[⠏]`, for a running row, live.
           #

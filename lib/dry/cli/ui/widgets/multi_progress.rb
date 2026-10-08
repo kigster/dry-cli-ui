@@ -58,7 +58,7 @@ module Dry
 
               Progress.total(total) unless total.nil?
 
-              @jobs << Multi::Job.new(label, work, Progress::Handle.new(total, nil, color: Progress.color(color)))
+              @jobs << Multi::Job.new(label, work, Progress::Handle.new(total, color: Progress.color(color)))
               self
             end
 
@@ -112,9 +112,11 @@ module Dry
           # @return [Object]
           def call(job) = spinner?(job) ? Line.call(job.work, job.handle) : super
 
+          # A bar whose total is known and zero ends failed, as {Progress::Handle#finish} says.
+          #
           # @param job [Job]
           # @return [Boolean] whether its line or its bar was told to fail
-          def reported_failure?(job) = job.handle.failed?
+          def reported_failure?(job) = spinner?(job) ? job.handle.failed? : job.handle.finish.failed?
 
           # @param job [Job]
           # @return [Progress::Handle, nil] nil for a spinner, which has no progress
@@ -126,21 +128,41 @@ module Dry
           def running(job, width)
             return [job.label, job.handle.detail].reject(&:empty?).join(" ") if spinner?(job)
 
-            "#{job.label.ljust(width)} #{meter(job.handle.current, job.handle.total, job.started, job.handle.color)}"
+            handle = job.handle
+            "#{job.label.ljust(width)} #{meter(handle.current, handle.total, job.started, handle.color, handle.counts)}"
           end
 
           # @param job [Job]
           # @return [String]
           def summary(job) = job.handle.summary(job.label)
 
+          # @param job [Job]
+          # @return [String, nil] a bar's failed and auxiliary counts, if any
+          def note(job) = spinner?(job) ? nil : Progress.breakdown(terminal.pastel, config, job.handle.counts)
+
           # @param width [Integer]
           # @return [String]
           def running_headline(width)
-            "#{title.ljust(width)} #{meter(current, total, started)}"
+            "#{title.ljust(width)} #{meter(current, total, started, nil, counts)}"
           end
 
           # @return [String]
           def headline_summary = "#{title} #{current}/#{total}"
+
+          # @return [String, nil] every bar's failed and auxiliary counts, if
+          #   any, when the headline counts units
+          def headline_note
+            tally = counts
+            tally && Progress.breakdown(terminal.pastel, config, tally)
+          end
+
+          # @return [Hash{Symbol => Integer}, nil] units by outcome across every
+          #   bar; nil when counting jobs
+          def counts
+            return if @count == :jobs
+
+            Progress::Handle::OUTCOMES.to_h { |outcome| [outcome, bars.sum { it.handle.counts[outcome] }] }
+          end
 
           # @return [Integer] units completed across every job, or jobs ended
           def current
@@ -163,22 +185,17 @@ module Dry
 
           # `[◼◼◼   ] 48%  96/200  ETA 3.1s`, with the count right-aligned to
           # the widest any row can show, so every count ends in one column.
-          #
-          # A bar whose total is not known yet is drawn empty, counting `12/?`.
+          # See {Progress.meter}.
           #
           # @param done [Integer]
           # @param all [Integer, nil]
-          # @param since [Float, nil] when the work started, by the clock
+          # @param since [Float] when the work started, by the clock
           # @param color [Symbol, nil] the bar's own colour, if any
+          # @param tally [Hash{Symbol => Integer}, nil] units by outcome
           # @return [String]
-          def meter(done, all, since, color = nil)
-            ratio = if all.nil? then 0.0
-                    elsif all.zero? then 1.0
-                    else done.fdiv(all)
-                    end
-            bar = Progress.bar(terminal.pastel, config, ratio, bar_columns, color: color)
-            format("%<bar>s %<percent>3d%%  %<count>s  ETA %<eta>s",
-                   bar: bar, percent: (ratio * 100).floor, count: "#{done}/#{all || '?'}".rjust(count_width), eta: eta(done, all, since))
+          def meter(done, all, since, color, tally)
+            Progress.meter(terminal.pastel, config, done: done, all: all, columns: bar_columns, eta: eta(done, all, since),
+                                                    color: color, counts: tally, count_width: count_width)
           end
 
           # The widest count any row shows: the headline's, once every job is done.
@@ -195,14 +212,9 @@ module Dry
 
           # @param done [Integer]
           # @param all [Integer, nil]
-          # @param since [Float, nil]
-          # @return [String] the time left at the rate so far, or `--` before
-          #   any progress or while the total is not known
-          def eta(done, all, since)
-            return "--" if since.nil? || done.zero? || all.nil?
-
-            Duration.format((clock.call - since) / done * (all - done))
-          end
+          # @param since [Float] when the work started, by the clock
+          # @return [String] see {Progress.eta}
+          def eta(done, all, since) = Progress.eta(done, all) { clock.call - since }
         end
       end
     end

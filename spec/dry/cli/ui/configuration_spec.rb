@@ -8,6 +8,8 @@ RSpec.describe Dry::CLI::UI::Configuration do
     its(:bar_format) { is_expected.to eq(complete: "◼", incomplete: " ") }
     its(:bar_color) { is_expected.to eq(:green) }
     its(:bar_background) { is_expected.to be_nil }
+    its(:bar_failed_color) { is_expected.to eq(:red) }
+    its(:bar_aux_color) { is_expected.to eq(:yellow) }
     its(:spinner_frames) { is_expected.to eq(%w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏]) }
     its(:spinner_frame_seconds) { is_expected.to eq(0.1) }
     its(:bar_complete) { is_expected.to eq("◼") }
@@ -60,6 +62,19 @@ RSpec.describe Dry::CLI::UI::Configuration do
     it "reject a style Pastel does not know" do
       expect { config.bar_color = :sparkly }.to raise_error(ArgumentError, /bar_color must be a Pastel style/)
       expect { config.bar_background = "gray" }.to raise_error(ArgumentError, /bar_background/)
+    end
+  end
+
+  describe "#bar_failed_color and #bar_aux_color" do
+    it "take any Pastel style, or nil, through the DSL or a writer" do
+      config.bar_failed_color(:magenta)
+      config.bar_aux_color = nil
+      expect([config.bar_failed_color, config.bar_aux_color]).to eq([:magenta, nil])
+    end
+
+    it "reject a style Pastel does not know" do
+      expect { config.bar_failed_color = :sparkly }.to raise_error(ArgumentError, /bar_failed_color must be a Pastel style/)
+      expect { config.bar_aux_color = "amber" }.to raise_error(ArgumentError, /bar_aux_color/)
     end
   end
 

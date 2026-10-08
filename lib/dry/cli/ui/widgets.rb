@@ -8,6 +8,7 @@ module Dry
       # namespace touches a TTY toolkit class.
       module Widgets
         autoload :Box, File.expand_path("widgets/box", __dir__)
+        autoload :Legend, File.expand_path("widgets/legend", __dir__)
         autoload :Multi, File.expand_path("widgets/multi", __dir__)
         autoload :MultiProgress, File.expand_path("widgets/multi_progress", __dir__)
         autoload :MultiSpinner, File.expand_path("widgets/multi_spinner", __dir__)

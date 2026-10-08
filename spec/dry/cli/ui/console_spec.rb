@@ -124,6 +124,19 @@ RSpec.describe Dry::CLI::UI::Console do
     it { expect { ui.multi_spinner("Fetching") }.to raise_error(ArgumentError, /needs a block/) }
   end
 
+  describe "#legend" do
+    subject(:legend) { ui.legend(failed: "errors and invalid files", ok: "forms") }
+
+    it { is_expected.to be_nil }
+
+    it "prints the colours and what they mean to err" do
+      legend
+      expect([err.string, out.string]).to eq(["Color Mapping: [ red: errors and invalid files | green: forms ]\n", ""])
+    end
+
+    it { expect { ui.legend }.to raise_error(ArgumentError, /legend needs at least one/) }
+  end
+
   describe "#multi_progress" do
     it "runs every job on err and returns their values" do
       expect(ui.multi_progress("Downloading") { |m| m.progress("a", total: 1) { |bar| bar.advance && :a } }).to eq([:a])
