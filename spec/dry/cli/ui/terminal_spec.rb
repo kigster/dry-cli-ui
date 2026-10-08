@@ -69,6 +69,31 @@ RSpec.describe Dry::CLI::UI::Terminal do
     end
   end
 
+  context "on a stream that asks for colour" do
+    let(:io) { Class.new(StringIO) { def color? = true }.new }
+
+    it { is_expected.not_to be_animated }
+    it { is_expected.to be_color }
+
+    context "with NO_COLOR set" do
+      let(:env) { { "NO_COLOR" => "1" } }
+
+      it { is_expected.not_to be_color }
+    end
+  end
+
+  context "on a stream that declines colour" do
+    let(:io) { Class.new(StringIO) { def color? = false }.new }
+
+    it { is_expected.not_to be_color }
+  end
+
+  describe "#inspect" do
+    subject { described_class.new(StringIO.new, env: { "API_TOKEN" => "secret" }).inspect }
+
+    it { is_expected.to start_with("#<Dry::CLI::UI::Terminal io=#<StringIO").and exclude("secret") }
+  end
+
   context "on an object that only knows how to print" do
     let(:io) { MinimalIO.new }
 
