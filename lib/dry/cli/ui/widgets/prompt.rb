@@ -17,6 +17,9 @@ module Dry
         # An exhausted input returns the default. A question without a
         # default raises {NonInteractiveError} rather than inventing an answer.
         class Prompt
+          # The choices {#confirm} offers on an interactive terminal.
+          CONFIRM_CHOICES = { "YES" => true, "NO" => false }.freeze
+
           # @param input [IO] where answers come from
           # @param terminal [Terminal] where questions go
           # @param backend [TTY::Prompt, nil] the interactive implementation; built on first use when nil
@@ -43,13 +46,14 @@ module Dry
             end
           end
 
-          # Asks a yes/no question.
+          # Asks a yes/no question. On an interactive terminal it is a list to pick YES or NO from,
+          # starting on the default; otherwise it reads `y`, `yes`, `n` or `no`.
           #
           # @param question [String]
           # @param default [Boolean] returned for an empty answer or an exhausted input
           # @return [Boolean]
           def confirm(question, default: false)
-            return backend.yes?(question, default: default) if interactive?
+            return backend.select(question, CONFIRM_CHOICES, default: default ? 1 : 2) if interactive?
 
             loop do
               terminal.print("#{question} #{default ? '(Y/n)' : '(y/N)'} ")

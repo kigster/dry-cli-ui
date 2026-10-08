@@ -75,7 +75,7 @@ module Dry
         def tasks: (?String? title, ?concurrent: (bool | Integer)) { (untyped tasks) -> void } -> nil
         def table: (Array[Array[_ToS]] rows, ?header: Array[_ToS]?) -> nil
         def prompt: (String question, ?default: untyped, ?choices: (Array[String] | Hash[String, untyped])?) -> untyped
-        def confirm: (String question, ?default: bool) -> bool
+        def confirm: (String question, ?default: bool, ?yes: bool) -> bool
       end
     end
   end

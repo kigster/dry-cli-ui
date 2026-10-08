@@ -167,10 +167,39 @@ RSpec.describe Dry::CLI::UI::Widgets::Prompt do
       expect(prompt.ask("Environment?", choices: %w[staging production])).to eq("production")
     end
 
-    it "confirms" do
-      backend.input << "y\n"
-      backend.input.rewind
-      expect(prompt.confirm("Deploy?")).to be(true)
+    context "confirming" do
+      subject(:answer) { prompt.confirm("Deploy?", default: default) }
+
+      let(:default) { false }
+
+      before do
+        backend.input << keys
+        backend.input.rewind
+      end
+
+      context "on the default" do
+        let(:keys) { "\r" }
+
+        it { is_expected.to be(false) }
+
+        it "offers YES and NO in a list" do
+          answer
+          expect(plain(backend.output.string)).to include("Deploy?", "YES", "NO")
+        end
+      end
+
+      context "on the default when it is yes" do
+        let(:default) { true }
+        let(:keys) { "\r" }
+
+        it { is_expected.to be(true) }
+      end
+
+      context "moving to the other answer" do
+        let(:keys) { "\e[A\r" }
+
+        it { is_expected.to be(true) }
+      end
     end
 
     context "without a backend" do

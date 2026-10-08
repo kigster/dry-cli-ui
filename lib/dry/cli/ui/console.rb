@@ -309,13 +309,18 @@ module Dry
           prompter.ask(question, default: default, choices: choices)
         end
 
-        # Asks a yes/no question.
+        # Asks a yes/no question: on a terminal, a list to pick YES or NO from. `yes: true`, which
+        # is what the reserved `-y/--yes` flag gives, answers it without asking.
+        #
+        # @example
+        #   exit 1 unless ui.confirm("Drop the table?", yes: yes)
         #
         # @param question [String]
         # @param default [Boolean]
+        # @param yes [Boolean] answer yes without asking
         # @return [Boolean]
-        def confirm(question, default: false)
-          prompter.confirm(question, default: default)
+        def confirm(question, default: false, yes: false)
+          yes || prompter.confirm(question, default: default)
         end
 
         private
