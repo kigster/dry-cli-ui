@@ -5,6 +5,12 @@
 - `ui` builds its console again when those streams change, so a command registered as an instance, or run in-process by `Dry::CLI::Launcher`, writes each call to that call's streams.
 - `ui_options` configures the console `ui` builds, in place of overriding `ui`.
 - CI runs the suite against both kigster/dry-cli and the latest dry-cli release, and against the latest release every week.
+- A progress handle counts each unit as an outcome: `bar.advance(step = 1, as: :ok)` takes `:ok`, `:aux` (relevant but auxiliary) or `:failed`, and `bar.counts` returns `{ ok:, aux:, failed: }`. Plain `advance(n)` counts as `:ok`, as before. Works in `ui.progress` and in every row of `ui.multi_progress`.
+- A bar draws its failed units first, in red, then its auxiliary ones, in yellow, then the rest in its own colour, each part as wide as its share. A bar with neither draws as before. `Dry::CLI::UI.configure` takes `bar_failed_color` and `bar_aux_color`.
+- A bar ends `✓` even when every unit failed, and its outcome line adds the breakdown after the time: `✓ Placing forms 100/100 (2.1s)  20 failed, 5 auxiliary`. The `multi_progress` headline, when it counts units, adds the sum of its rows'.
+- A bar whose total is known and 0 when its job ends now ends `𝘅 label 0/0: nothing to process`, unless the job called `bar.fail` with a reason of its own. Before, it ended `✓`. In `multi_progress` the headline then ends `𝘅` too.
+- `ui.progress` turns a spinner before its label while it runs, as each `multi_progress` row does, and draws the bar itself rather than through `TTY::ProgressBar`. Piped output is unchanged.
+- `ui.legend(failed:, aux:, ok:)` prints one line to `err` saying what each colour of a bar means: `Color Mapping: [ red: errors and invalid files | yellow: relevant but auxiliary | green: forms ]`, or each label on its colour's background on a terminal.
 
 ## [0.6.1]
 
