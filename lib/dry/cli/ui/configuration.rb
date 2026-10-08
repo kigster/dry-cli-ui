@@ -14,6 +14,8 @@ module Dry
       #     bar_format :box                               # any TTY::ProgressBar bar format name
       #     bar_color :cyan                               # any Pastel style, or nil
       #     bar_background nil                            # any Pastel style, or nil
+      #     bar_failed_color :red                         # any Pastel style, or nil
+      #     bar_aux_color :yellow                         # any Pastel style, or nil
       #   end
       #
       #   Dry::CLI::UI.configure do |config|
@@ -24,12 +26,15 @@ module Dry
       # Anything not set reads from {DEFAULTS}.
       class Configuration
         # What a setting reads before it is set: a green `◼` for each finished
-        # part of a bar, with no background behind it.
+        # part of a bar, with no background behind it, red for the units that
+        # failed and yellow for the auxiliary ones.
         DEFAULTS = {
           spinner_format: :dots,
           bar_format: { complete: "◼", incomplete: " " }.freeze,
           bar_color: :green,
-          bar_background: nil
+          bar_background: nil,
+          bar_failed_color: :red,
+          bar_aux_color: :yellow
         }.freeze
 
         # Every style name Pastel knows, for checking colour settings.
@@ -61,6 +66,14 @@ module Dry
         #   Reads the background the whole bar is drawn on, or sets it.
         #   @param value [Symbol, nil] a Pastel style, such as :on_blue; nil for none
         #   @return [Symbol, nil]
+        # @!method bar_failed_color(value = UNSET)
+        #   Reads the colour a bar's failed units are drawn in, or sets it.
+        #   @param value [Symbol, nil] a Pastel style, such as :red; nil for none
+        #   @return [Symbol, nil]
+        # @!method bar_aux_color(value = UNSET)
+        #   Reads the colour a bar's auxiliary units are drawn in, or sets it.
+        #   @param value [Symbol, nil] a Pastel style, such as :yellow; nil for none
+        #   @return [Symbol, nil]
         DEFAULTS.each_key do |name|
           define_method(name) do |value = UNSET|
             return @values.fetch(name) { DEFAULTS.fetch(name) } if UNSET.equal?(value)
@@ -91,6 +104,18 @@ module Dry
         # @raise [ArgumentError] for a style Pastel does not know
         def bar_background=(value)
           @values[:bar_background] = style(:bar_background, value)
+        end
+
+        # @param value [Symbol, nil] see {#bar_failed_color}
+        # @raise [ArgumentError] for a style Pastel does not know
+        def bar_failed_color=(value)
+          @values[:bar_failed_color] = style(:bar_failed_color, value)
+        end
+
+        # @param value [Symbol, nil] see {#bar_aux_color}
+        # @raise [ArgumentError] for a style Pastel does not know
+        def bar_aux_color=(value)
+          @values[:bar_aux_color] = style(:bar_aux_color, value)
         end
 
         # @return [Array<String>] the frames a spinner cycles through

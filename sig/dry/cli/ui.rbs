@@ -33,6 +33,10 @@ module Dry
         def bar_color=: (Symbol? value) -> Symbol?
         def bar_background: (?Symbol? value) -> Symbol?
         def bar_background=: (Symbol? value) -> Symbol?
+        def bar_failed_color: (?Symbol? value) -> Symbol?
+        def bar_failed_color=: (Symbol? value) -> Symbol?
+        def bar_aux_color: (?Symbol? value) -> Symbol?
+        def bar_aux_color=: (Symbol? value) -> Symbol?
         def spinner_frames: () -> Array[String]
         def spinner_frame_seconds: () -> Float
         def bar_complete: () -> String
