@@ -54,6 +54,28 @@ module Dry
         def summary: (String label) -> String
       end
 
+      module Widgets
+        class Progress
+          class Handle
+            type outcome = :ok | :aux | :failed
+
+            OUTCOMES: Array[outcome]
+
+            def total: () -> Integer?
+            def total=: (Integer value) -> Integer
+            def color: () -> Symbol?
+            def current: () -> Integer
+            def counts: () -> { ok: Integer, aux: Integer, failed: Integer }
+            def advance: (?Integer step, ?as: outcome) -> self
+            def fail: (?_ToS? reason) -> self
+            def failed?: () -> bool
+            def reason: () -> String?
+            def finish: () -> self
+            def summary: (String label) -> String
+          end
+        end
+      end
+
       class Stop
         def stopped?: () -> bool
         def stop!: () -> self
@@ -72,7 +94,7 @@ module Dry
         def popup: (*_ToS paragraphs, ?title: String?, ?width: Integer?) -> nil
         def spinner: [T] (String label) { (Line line) -> T } -> T
         def multi_spinner: (String title, ?concurrent: (bool | Integer), ?stop: Stop?) { (untyped spinners) -> void } -> Array[untyped]
-        def progress: [T] (String label, total: Integer, ?color: Symbol?) { (untyped progress) -> T } -> T
+        def progress: [T] (String label, total: Integer, ?color: Symbol?) { (Widgets::Progress::Handle progress) -> T } -> T
         def multi_progress: (String title, ?concurrent: (bool | Integer), ?count: (:units | :jobs), ?total: Integer?, ?stop: Stop?) { (untyped bars) -> void } -> Array[untyped]
         def stoppable: [T] () { (Stop stop) -> T } -> T
         def status_bar: [T] (?String? title, ?hints: Array[String] | String) { () -> T } -> T
