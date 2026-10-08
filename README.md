@@ -254,9 +254,9 @@ ui.progress("Importing rules", total: rules.size) do |bar|
 end
 ```
 
-The bar shows percent, `current/total` and ETA, `Importing rules [◼◼◼◼◼◼    ] 61%  1159/1900  ETA 2.7s`, and ends with `✓ Importing rules 1900/1900 (4.2s)`. On a terminal the `◼`s are green, between brackets, on no background; see [Configuration](#configuration) to change either.
+The bar shows a turning spinner, percent, `current/total` and ETA, `⠋ Importing rules [◼◼◼◼◼◼    ]  61%  1159/1900  ETA 2.7s`, and ends with `✓ Importing rules 1900/1900 (4.2s)`. On a terminal the `◼`s are green, between brackets, on no background; see [Configuration](#configuration) to change either.
 
-The block is given a `Dry::CLI::UI::Widgets::Progress::Handle`, never the underlying `TTY::ProgressBar`:
+The block is given a `Dry::CLI::UI::Widgets::Progress::Handle`, never a TTY toolkit object:
 
 ```ruby
 ui.progress("Copying", total: files.sum(&:size)) do |bar|
@@ -268,14 +268,71 @@ ui.progress("Copying", total: files.sum(&:size)) do |bar|
 end
 ```
 
-- `advance(step = 1)` adds to `current` and returns the handle; `current` never passes `total`.
+- `advance(step = 1, as: :ok)` adds to `current` and returns the handle; `current` never passes `total`. `as:` counts the units as `:ok`, `:aux` or `:failed`; see [Failed and auxiliary units](#failed-and-auxiliary-units).
 - `total = n` sets the total once the work finds out, such as a download learning its size, and lowers `current` to fit. Anything but a non-negative Integer raises `ArgumentError`.
 - `total:` must be a non-negative Integer, or `progress` raises `ArgumentError`.
-- `total: 0` draws no bar, and ends `✓ Copying 0/0`.
+- `total: 0` draws no bar, and ends `𝘅 Copying 0/0: nothing to process`, since there was nothing to do. A block that calls `bar.fail(reason)` first keeps its own reason.
 - `color:` paints this bar's finished part in any Pastel style, such as `color: :red`, instead of the configured `bar_color`. A style Pastel does not know raises `ArgumentError` before the block runs.
-- The outcome is `✓` whenever the block returns, even short of the total (`✓ Copying 12/20`), and `𝘅` when it raises.
+- The outcome is `✓` whenever the block returns, even short of the total (`✓ Copying 12/20`) and even when every unit failed, and `𝘅` when it raises or calls `bar.fail`.
 
 Piped, it prints `Importing rules...` when it starts and the outcome line when it ends, with no bar in between.
+
+### Failed and auxiliary units
+
+Work that goes through many files rarely succeeds on all of them. `bar.advance(as:)` counts each unit as one of three outcomes:
+
+- `:ok`, the default: the unit is what the work is for, such as a form placed.
+- `:aux`: relevant but auxiliary, such as a scaffold created or an instruction filed elsewhere.
+- `:failed`: an error, or an invalid file.
+
+Anything else raises `ArgumentError`. `bar.counts` returns the units so far by outcome, `{ ok: 7, aux: 1, failed: 2 }`, adding up to `bar.current`.
+
+The bar's finished part is drawn left to right in red for the failed units, yellow for the auxiliary ones, and the bar's own colour for the rest, each part as wide as its share of the units done: half way through, with a fifth of the files failed, the first fifth of the filled part is red and the rest green. The bar ends with `✓` and the breakdown after the time, with the numbers in their colours on a terminal. `ui.legend` prints a line saying what each colour means; call it before the first bar. Each of `failed:`, `aux:` and `ok:` is optional, and a label not given is left out. On a terminal each label is drawn on its colour's background.
+
+```ruby
+ui.legend(failed: "errors and invalid files", aux: "relevant but auxiliary", ok: "forms")
+
+ui.progress("Placing forms", total: files.size) do |bar|
+  files.each do |file|
+    case place(file)
+    in :placed then bar.advance
+    in :scaffold then bar.advance(as: :aux)
+    in :invalid then bar.advance(as: :failed)
+    end
+  end
+end
+```
+
+Piped, with two invalid files and one scaffold among ten:
+
+```text
+Color Mapping: [ red: errors and invalid files | yellow: relevant but auxiliary | green: forms ]
+Placing forms...
+✓ Placing forms 10/10 (0.0s)  2 failed, 1 auxiliary
+```
+
+`m.progress` inside `ui.multi_progress` takes the same `as:`. Each row ends with its own breakdown, and the headline, when it counts units, with the sum of them all. A row whose total is 0 when its job ends fails with `nothing to process`, and so the headline ends `𝘅`:
+
+```ruby
+ui.multi_progress("Placing forms", concurrent: false) do |m|
+  m.progress("us", total: federal.size) { |bar| federal.each { bar.advance(as: place(it) == :invalid ? :failed : :ok) } }
+  states.each do |state, forms|
+    m.progress(state, total: forms.size) { |bar| forms.each { bar.advance(as: :failed) } }
+  end
+end
+```
+
+Piped, where `us-ny` has no forms:
+
+```text
+Placing forms...
+  [✓] us 6/6 (0.0s)  2 failed
+  [✓] us-ca 2/2 (0.0s)  2 failed
+  [𝘅] us-ny 0/0: nothing to process (0.0s)
+𝘅 Placing forms 8/8 (0.0s)  4 failed
+```
+
+The colours are `bar_failed_color` and `bar_aux_color` in the [Configuration](#configuration).
 
 ### Several spinners at once
 
@@ -360,7 +417,7 @@ The same shape as `multi_spinner`, with a bar per job and a headline bar that co
 └─ [ ] video.mp4
 ```
 
-Each job is given the same handle as `ui.progress`, with `advance(step = 1)`, `current` and `total`. `m.progress` takes `color:` as `ui.progress` does, so bars side by side can differ:
+Each job is given the same handle as `ui.progress`, with `advance(step = 1, as: :ok)`, `counts`, `current` and `total`. `m.progress` takes `color:` as `ui.progress` does, so bars side by side can differ:
 
 ```ruby
 ui.multi_progress("Probing #{hosts.size} hosts", total: hosts.size) do |m|
@@ -790,10 +847,12 @@ Dry::CLI::UI.configure do
   bar_format(complete: "◼", incomplete: " ")           # or any TTY::ProgressBar bar format name, such as :box
   bar_color :green                                     # the finished part: any Pastel style, or nil
   bar_background nil                                   # the whole bar: any Pastel style, or nil
+  bar_failed_color :red                                # units counted as: :failed: any Pastel style, or nil
+  bar_aux_color :yellow                                # units counted as: :aux: any Pastel style, or nil
 end
 ```
 
-Those are the defaults: spinners turn through `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` ten times a second, and bars draw a green `◼` for each finished part, with nothing behind them, and brackets show where the bar begins and ends. Every spinner reads the same format, including `multi_spinner`, task trees and the status bar, and every bar reads the same characters and colours, except a bar given its own `color:`. The formats also take a definition of your own:
+Those are the defaults: spinners turn through `⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏` ten times a second, and bars draw a green `◼` for each finished part, with nothing behind them, and brackets show where the bar begins and ends. Units counted as failed or auxiliary are drawn red and yellow, and `ui.legend` names the same colours. Every spinner reads the same format, including `multi_spinner`, task trees and the status bar, and every bar reads the same characters and colours, except a bar given its own `color:`. The formats also take a definition of your own:
 
 ```ruby
 Dry::CLI::UI.configure do |config|

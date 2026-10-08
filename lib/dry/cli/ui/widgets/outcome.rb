@@ -12,11 +12,13 @@ module Dry
           # @param state [Symbol] `:done` or `:failed`
           # @param label [String] what the operation was
           # @param seconds [Numeric] how long it took
+          # @param note [String, nil] said after the time, such as a progress
+          #   bar's breakdown `20 failed, 5 auxiliary`
           # @return [String] the line, without a newline
-          def self.line(terminal, state, label, seconds)
+          def self.line(terminal, state, label, seconds, note: nil)
             glyph, color = Theme::STATES.fetch(state)
             pastel = terminal.pastel
-            "#{pastel.decorate(glyph, *color)} #{label} #{pastel.bright_black("(#{Duration.format(seconds)})")}"
+            "#{pastel.decorate(glyph, *color)} #{label} #{pastel.bright_black("(#{Duration.format(seconds)})")}#{"  #{note}" if note}"
           end
         end
       end
