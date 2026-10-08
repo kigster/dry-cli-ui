@@ -33,6 +33,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency "binding_of_caller", "~> 2.0"
   spec.add_dependency "concurrent-ruby", "~> 1.3"
   spec.add_dependency "dry-cli", ">= 1.0"
+  spec.add_dependency "logger", "~> 1.6"
   spec.add_dependency "pastel", "~> 0.8"
   spec.add_dependency "semantic_logger", "~> 5.1"
   spec.add_dependency "strings", "~> 0.2"
