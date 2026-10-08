@@ -4,6 +4,7 @@
 - Under released dry-cli (1.4 and earlier), `ui` writes to the command's protected `out` and `err`, as before, and reads prompts from `$stdin`. dry-cli with public command streams is no longer required.
 - `ui` builds its console again when those streams change, so a command registered as an instance, or run in-process by `Dry::CLI::Launcher`, writes each call to that call's streams.
 - `ui_options` configures the console `ui` builds, in place of overriding `ui`.
+- CI runs the suite against both kigster/dry-cli and the latest dry-cli release, and against the latest release every week.
 
 ## [0.6.1]
 

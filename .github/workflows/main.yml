@@ -13,16 +13,17 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    name: Ruby ${{ matrix.ruby }}
+    name: Ruby ${{ matrix.ruby }}, dry-cli ${{ matrix.dry-cli }}
     strategy:
+      fail-fast: false
       matrix:
         ruby:
           - '4.0.6'
-
-    # COVERAGE makes the suite enforce 100% line and branch coverage, which it
-    # otherwise skips when rspec is given arguments, as `rake` does.
-    env:
-      COVERAGE: "true"
+        # fork: kigster/dry-cli with public command streams, as the Gemfile takes it.
+        # release: the latest dry-cli on rubygems, which gives a command only `out` and `err`.
+        dry-cli:
+          - fork
+          - release
 
     steps:
       - uses: actions/checkout@v6
@@ -33,10 +34,28 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ matrix.ruby }}
-          bundler-cache: true
+          bundler-cache: ${{ matrix.dry-cli == 'fork' }}
 
+      # COVERAGE makes the suite enforce 100% line and branch coverage, which it
+      # otherwise skips when rspec is given arguments, as `rake` does. Only the
+      # fork reaches every branch: the release has no Dry::CLI::Stream to unwrap.
       - name: Run the specs
+        if: matrix.dry-cli == 'fork'
         run: bundle exec rake
+        env:
+          COVERAGE: "true"
+
+      - name: Take the latest dry-cli release
+        if: matrix.dry-cli == 'release'
+        run: bundle update dry-cli && bundle info dry-cli
+        env:
+          DRY_CLI_SOURCE: rubygems
+
+      - name: Run the specs against it
+        if: matrix.dry-cli == 'release'
+        run: bundle exec rake
+        env:
+          DRY_CLI_SOURCE: rubygems
 
       - name: Build the gem
         run: gem build dry-cli-ui.gemspec
