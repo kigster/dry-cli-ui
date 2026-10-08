@@ -34,14 +34,25 @@ module Dry
       autoload :Configuration, File.expand_path("ui/configuration", __dir__)
       autoload :Console, File.expand_path("ui/console", __dir__)
       autoload :Duration, File.expand_path("ui/duration", __dir__)
+      autoload :Flags, File.expand_path("ui/flags", __dir__)
+      autoload :Invocation, File.expand_path("ui/invocation", __dir__)
       autoload :Line, File.expand_path("ui/line", __dir__)
+      autoload :Logging, File.expand_path("ui/logging", __dir__)
+      autoload :Report, File.expand_path("ui/report", __dir__)
+      autoload :Reporting, File.expand_path("ui/reporting", __dir__)
       autoload :Stop, File.expand_path("ui/stop", __dir__)
       autoload :StatusBar, File.expand_path("ui/status_bar", __dir__)
       autoload :Terminal, File.expand_path("ui/terminal", __dir__)
       autoload :Theme, File.expand_path("ui/theme", __dir__)
       autoload :Widgets, File.expand_path("ui/widgets", __dir__)
 
+      @started_at = ::Time.now
+
       class << self
+        # @return [Time] when this gem loaded, which stands for when the process started. Stamps
+        #   the file name of a report `-o` writes.
+        attr_reader :started_at
+
         # Make process-wide settings. A block taking an argument receives the
         # configuration; any other block runs against it.
         #
@@ -100,7 +111,7 @@ module Dry
         streams = ui_streams
         @ui = nil unless @ui_streams && streams.all? { |name, io| @ui_streams[name].equal?(io) }
         @ui_streams = streams
-        @ui ||= Console.new(**streams, **ui_options)
+        @ui ||= Console.new(**streams, invocation: Invocation.for(self), **ui_options)
       end
 
       private

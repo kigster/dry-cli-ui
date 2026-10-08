@@ -241,6 +241,14 @@ RSpec.describe Dry::CLI::UI::Console do
       expect(ui.prompt("Name?", default: "Ada")).to eq("production")
       expect(ui.confirm("Again?", default: true)).to be(true)
     end
+
+    context "when told yes, as -y does" do
+      subject! { ui.confirm("Drop the table?", yes: true) }
+
+      it { is_expected.to be(true) }
+      it { expect(err.string).to be_empty }
+      it { expect(input.gets).to eq("production\n") }
+    end
   end
 
   context "when neither stream is a terminal" do

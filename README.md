@@ -15,7 +15,7 @@ A long-running command has more to say than `puts` can show well: what it is doi
 gem "dry-cli-ui"
 ```
 
-Requires Ruby 4.0 or later and `dry-cli` 1.0 or later. The rendering comes from the [TTY toolkit](https://ttytoolkit.org) (`tty-box`, `tty-spinner`, `tty-progressbar`, `tty-table`, `tty-prompt`, `tty-cursor`, `tty-screen`), `pastel`, `strings` and `concurrent-ruby`, which Bundler installs with the gem.
+Requires Ruby 4.0 or later and `dry-cli` 1.0 or later. The rendering comes from the [TTY toolkit](https://ttytoolkit.org) (`tty-box`, `tty-spinner`, `tty-progressbar`, `tty-table`, `tty-prompt`, `tty-cursor`, `tty-screen`), `pastel`, `strings` and `concurrent-ruby`, and the [reserved flags](#reserved-flags) log through `semantic_logger` (with `logger`) and `binding_of_caller`. Bundler installs them all with the gem.
 
 Either require works, and both load the same file:
 
@@ -782,7 +782,7 @@ ui.confirm("Deploy to #{env}?", default: false)
 
 - `prompt` returns the answer as a String, or the default for an empty answer.
 - With an Array of `choices:`, it returns the chosen name; with a Hash, the value the chosen name maps to (`:pro` above). `default:` is the name of a choice.
-- `confirm` returns `true` or `false`, and `default:` is `false` unless given.
+- `confirm` returns `true` or `false`, and `default:` is `false` unless given. On a terminal it is a list to pick YES or NO from, starting on the default. `yes: true`, which is what the reserved `-y/--yes` flag gives (see [Reserved flags](#reserved-flags)), returns `true` without asking.
 
 When both standard input and `err` are terminals, these use arrow-key menus and line editing (TTY::Prompt). Otherwise they print the question to `err` and read lines from standard input, so answers can be piped:
 
@@ -836,6 +836,141 @@ Errors raised inside a block are never swallowed: the widget marks itself failed
 `mycli export > rules.csv` therefore writes only the command's results to the file, while its progress stays on the screen. `ui` writes to the streams dry-cli was called with, so `Dry::CLI.new(registry).call(stdout: io, stderr: io)` captures everything.
 
 A stream that is not a terminal, or runs under `TERM=dumb`, gets no animation, no cursor movement and no escape codes. [`NO_COLOR`](https://no-color.org) turns colour off and leaves animation on.
+
+## Reserved flags
+
+A few flags mean the same thing in every CLI built on this gem. A command takes the ones it needs:
+
+| Flag | Long                  | Reaches `call` as | Meaning                                                                                                                  |
+| ---- | --------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `-n` | `--dry-run`           | `dry_run:`        | change nothing, print what would happen                                                                                  |
+| `-y` | `--yes`               | `yes:`            | skip every interactive prompt                                                                                            |
+| `-o` | `--output [FILE]`     | `output:`         | write the command's report (tables, lists, summaries) to FILE, in colour                                                 |
+| `-l` | `--log [FILE]`        | `log:`            | log to FILE through [SemanticLogger](https://logger.rocketjob.io)                                                        |
+| `-L` | `--log-level LEVEL`   | `log_level:`      | `debug`, `info` (the default), `warn`, `error` or `fatal`                                                                |
+|      | `--log-format FORMAT` | `log_format:`     | `standard` (the default, one line per entry), `json`, or any other SemanticLogger formatter, such as `logfmt` or `color` |
+
+```ruby
+require "dry/cli"
+require "dry-cli-ui"
+
+class Export < Dry::CLI::Command
+  include Dry::CLI::UI
+  extend Dry::CLI::UI::Flags
+
+  desc "Export the rules"
+  flags :dry_run, :yes, :output, :log     # :log brings -L and --log-format with it
+
+  RULES = [["standard_deduction", 14_600], ["salt_cap", 10_000]].freeze
+
+  def call(dry_run:, yes:, **options)
+    ui.with_flags(**options) do |io|
+      ui.logger.info("Exporting", rules: RULES.size)
+      next ui.status("Would export #{RULES.size} rules", level: :warn) if dry_run
+      next unless ui.confirm("Export #{RULES.size} rules?", yes: yes)
+
+      ui.table(RULES, header: %w[Rule Amount])
+      io.puts "#{RULES.size} rules exported"
+    end
+  end
+end
+```
+
+`flags` declares ordinary dry-cli options, so they show in the command's help, and an unknown name raises `ArgumentError`:
+
+```text
+Options:
+  --dry-run, -n                # Change nothing; print what would happen, default: false
+  --yes, -y                    # Answer yes to every prompt, default: false
+  --output=VALUE, -o VALUE     # Write the report to FILE: log/ by default, - for STDOUT
+  --log=VALUE, -l VALUE        # Log to FILE: log/ by default, - for STDOUT
+  --log-level=VALUE, -L VALUE  # Log level: (debug, info, warn, error, fatal), default: "info"
+  --log-format=VALUE           # Log format: standard, json, or another SemanticLogger formatter, default: "standard"
+  --help, -h                   # Print this help
+```
+
+`-o` and `-l` may be given without a file. dry-cli requires a value for every option that takes one, so loading `Dry::CLI::UI::Flags` prepends a small hook onto `Dry::CLI` that, for the commands extending it and nothing else, turns a bare `-o`, `--output`, `-l` or `--log` into an empty value before dry-cli parses the line. A switch is bare when it comes last, or when the next argument starts with `-` and is not exactly `-`. `-o x`, `-o=x`, `--output=x`, `-ox` and `-o -` are left alone, as is everything after `--`. The rewrite is also a function of its own:
+
+```ruby
+Dry::CLI::UI::Flags.arguments(%w[export -o -l run.log])   # => ["export", "-o", "", "-l", "run.log"]
+```
+
+The hook also records the names a command was called by, which name its default files: `<executable>-<action>`, where the action is the command's names joined with `-` (`law-cli generate text` gives `law-cli-generate-text`).
+
+### Where the report goes
+
+`ui.output(output) { |io| ... }` sends what the block writes to `out` (tables, boxes and statuses at `info` and `success`) to the file `-o` named, and gives the block that file as `io` for writing to it directly. Spinners, bars, prompts and warnings stay on `err`, and so on the screen.
+
+| `-o` given         | `output:`         | The report goes to                                                                               |
+| ------------------ | ----------------- | ------------------------------------------------------------------------------------------------ |
+| not at all         | `nil`             | the command's `out`, as usual                                                                    |
+| `-o -`             | `"-"`             | the command's `out`                                                                              |
+| `-o`               | `""`              | `log/<executable>-<action>.<YYYY-MM-DD>.<HHMMSS>.log`, stamped with the time the process started |
+| `-o reports/x.txt` | `"reports/x.txt"` | that file, relative to the current directory                                                     |
+
+`log/` is at the repository root: the nearest directory up from the current one holding `.git`, else the current directory. It is created when missing; add `/log/*` to the repository's `.gitignore` once. A file is written in colour although it is no terminal (unless `NO_COLOR` is set), its last line says when it was closed, and a line on `err` says where it is:
+
+```text
+$ mycli export -y -o | cat
+ℹ Report written to log/mycli-export.2026-10-08.031215.log
+```
+
+```text
+$ cat log/mycli-export.2026-10-08.031215.log
+┌────────────────────┬────────┐
+│ Rule               │ Amount │
+├────────────────────┼────────┤
+│ standard_deduction │ 14600  │
+│ salt_cap           │ 10000  │
+└────────────────────┴────────┘
+2 rules exported
+Closed at 2026-10-08 03:12:15 -0700
+```
+
+### Logging
+
+`ui.logging(log, level: log_level, format: log_format) { ... }` adds a SemanticLogger appender while the block runs, then flushes and removes it. `ui.logger` is a SemanticLogger logger named after the command's class, and writes nothing until an appender is added.
+
+| `-l` given   | `log:`      | The log goes to                              |
+| ------------ | ----------- | -------------------------------------------- |
+| not at all   | `nil`       | nowhere: no appender is added                |
+| `-l -`       | `"-"`       | the command's `out`                          |
+| `-l`         | `""`        | `log/<executable>-<action>.log`, appended to |
+| `-l run.log` | `"run.log"` | that file                                    |
+
+```text
+$ mycli export -n -l - | cat
+⚠ Would export 2 rules
+2026-10-08 03:11:21.436756 I [22306:1056] Export -- Exporting -- {rules: 2}
+```
+
+An unknown level or format raises `ArgumentError` naming the ones there are, as in `unknown log format "yaml", expected one of color, ecs, fluentd, json, logfmt, ...`.
+
+`ui.log_exception(e, message = nil, level: :error)` logs an exception with its backtrace. At `-L debug` the gem also records, for every exception raised while the block runs, the local variables of each frame it was raised through (with [binding_of_caller](https://github.com/banister/binding_of_caller)), and `log_exception` adds them as the payload's `locals`. Each value is its `inspect`, cut at 200 characters, for at most 25 frames, leaving out the gem's own. Recording costs time on every `raise`, which is why it happens at `debug` only. The values are whatever the program held, secrets included, so treat a debug log as you would a core dump.
+
+```ruby
+def check(amount, limit: 10_000)
+  raise ArgumentError, "over the cap" if amount > limit
+end
+
+ui.logging("-", level: "debug") do
+  check(14_600)
+rescue ArgumentError => e
+  ui.log_exception(e, "Check failed")
+end
+```
+
+```text
+2026-10-08 03:11:32.024362 E [22511:792 reporting.rb:107] check.rb -- Check failed -- {locals: [{frame: "check.rb:4", locals: {amount: "14600", limit: "10000"}}, {frame: "check.rb:8", locals: {e: "nil"}}]} -- Exception: ArgumentError: over the cap
+check.rb:4:in 'Object#check'
+check.rb:8:in 'block in <main>'
+```
+
+### All of them at once
+
+`ui.with_flags(**options) { |io| ... }` is `ui.logging` around `ui.output`, taking the whole options hash `call` receives and ignoring what it does not use, as in the `Export` command above. `dry_run:` and `yes:` are the command's to act on: return before changing anything, and pass `yes:` to `ui.confirm`.
+
+SemanticLogger and binding_of_caller load the first time a command logs, and binding_of_caller only at `debug`, so declaring the flags costs a command nothing at boot.
 
 ## Configuration
 
@@ -920,6 +1055,8 @@ Every option `Console.new` takes:
 | `box_width:` | `nil`                 | the width of every box; `nil` fills the terminal less two columns    |
 | `clock:`     | monotonic clock       | any object whose `call` returns seconds, for elapsed times           |
 | `config:`    | `Dry::CLI::UI.config` | a `Dry::CLI::UI::Configuration` for this console alone               |
+
+`Console.new` also takes `invocation:`, a `Dry::CLI::UI::Invocation` naming the files `-o` and `-l` write (see [Reserved flags](#reserved-flags)); `ui` builds one from the command, and a console given none names them after the program alone.
 
 `config:` gives one console a look of its own without changing the process-wide one:
 

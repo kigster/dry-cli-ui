@@ -20,6 +20,60 @@ module Dry
       def self.configure: () { (Configuration config) -> void } -> Configuration
       def self.config: () -> Configuration
       def self.reset!: () -> void
+      def self.started_at: () -> Time
+
+      module Flags
+        OPTIONS: Hash[Symbol, Hash[Symbol, Hash[Symbol, untyped]]]
+        OPTIONAL_VALUES: Array[Symbol]
+        SWITCHES: Array[String]
+
+        def self.arguments: (Array[String] argv, ?switches: Array[String]) -> Array[String]
+        def self.switches: (untyped command) -> Array[String]
+        def flags: (*Symbol names) -> Array[Symbol]
+      end
+
+      class Invocation
+        attr_reader executable: String
+        attr_reader action: String?
+        attr_reader name: String
+        attr_reader started_at: Time
+        attr_reader directory: String
+
+        def self.new: (executable: String, action: String?, name: String, started_at: Time, directory: String) -> Invocation
+        def self.for: (?untyped command, ?program: String, ?started_at: Time, ?directory: String) -> Invocation
+        def self.root: (String directory) -> String
+        def basename: () -> String
+        def report_path: (String? value) -> String?
+        def log_path: (String? value) -> String?
+      end
+
+      class Report
+        def color?: () -> true
+      end
+
+      class Logging
+        LEVELS: Array[String]
+        FORMATS: Hash[String, Symbol]
+        INSPECT_LIMIT: Integer
+        FRAME_LIMIT: Integer
+
+        def self.level: (String | Symbol name) -> Symbol
+        def self.formatter: (String | Symbol name) -> untyped
+        def self.formats: () -> Array[String]
+        def self.logger: (String name) -> untyped
+        def self.locals: (Exception exception) -> Array[Hash[Symbol, untyped]]?
+        def self.record: (Exception exception) -> void
+        def initialize: (String? target, io: untyped, level: String | Symbol, format: String | Symbol) -> void
+        def run: [T] () { () -> T } -> T
+      end
+
+      module Reporting
+        def output: [T] (?String? value) { (untyped io) -> T } -> T
+        def logging: [T] (String? value, ?level: String | Symbol, ?format: String | Symbol) { () -> T } -> T
+        def with_flags: [T] (?output: String?, ?log: String?, ?log_level: String | Symbol, ?log_format: String | Symbol, **untyped) { (untyped io) -> T } -> T
+        def logger: () -> untyped
+        def log_exception: (Exception exception, ?String? message, ?level: String | Symbol) -> nil
+      end
 
       class Configuration
         type spinner_definition = Symbol | { interval: Numeric, frames: Array[String] | String }
@@ -83,6 +137,8 @@ module Dry
       end
 
       class Console
+        include Reporting
+
         def debug: (*_ToS paragraphs, ?width: Integer?) -> nil
         def info: (*_ToS paragraphs, ?width: Integer?) -> nil
         def success: (*_ToS paragraphs, ?width: Integer?) -> nil
@@ -102,7 +158,7 @@ module Dry
         def tasks: (?String? title, ?concurrent: (bool | Integer)) { (untyped tasks) -> void } -> nil
         def table: (Array[Array[_ToS]] rows, ?header: Array[_ToS]?) -> nil
         def prompt: (String question, ?default: untyped, ?choices: (Array[String] | Hash[String, untyped])?) -> untyped
-        def confirm: (String question, ?default: bool) -> bool
+        def confirm: (String question, ?default: bool, ?yes: bool) -> bool
       end
     end
   end

@@ -42,3 +42,5 @@ end
 RSpec.configure { |config| config.include AnsiHelpers }
 
 RSpec::Matchers.define_negated_matcher :exclude, :include
+
+RSpec::Matchers.define_negated_matcher :avoid_changing, :change
